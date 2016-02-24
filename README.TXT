@@ -10,9 +10,9 @@ http://blog.cr4.sh/2016/02/exploiting-smm-callout-vulnerabilities.html
 
 Project includes the following components:
 
- * src/libfwexpl — Hardware abstraction library for Windows.
+ * src/libfwexpl — Hardware abstraction library for Windows (see include/libfwexpl.h).
  
- * src/libdsebypass — Windows x64 DSE bypass exploit based on Secret Net 7.4 0day privileges escalation vulnerability.
+ * src/libdsebypass — Windows x64 DSE bypass exploit based on Secret Net 7.4 0day privileges escalation vulnerability (see include/libdsebypass.h).
  
  * src/driver — Kernel mode part of libfwexpl.
  
@@ -50,7 +50,9 @@ To run exploit from command line you can use bin/fwexpl_app_amd64.exe program, h
 
   --dse-bypass — Install and exploit Secret Net 7.4 driver to bypass Windows x64 DSE.
 
-Please note, that --dse-bypass option requires sncc0.sys file in the same directory with fwexpl_app_amd64.exe, this file can be downloaded here: https://mega.nz/#!ydEnSabK!H63Yw44POR0dO02WAh-f1eqgHaWeeqlqP75_XwIzw_4
+Please note, that --dse-bypass option requires sncc0.sys file (digitally signed vulnerable driver from Secret Net) in the same directory with fwexpl_app_amd64.exe, this file can be downloaded here: 
+
+https://mega.nz/#!ydEnSabK!H63Yw44POR0dO02WAh-f1eqgHaWeeqlqP75_XwIzw_4
 
 
 Usage examples:
@@ -58,6 +60,8 @@ Usage examples:
   > fwexpl_app_amd64.exe --target 1 — Test run of SMM exploit without payload;
 
   > fwexpl_app_amd64.exe --target 1 --phys-mem-read 0x86000000 --size 0x1000 — Read 4096 bytes of physical memory starting from 0x86000000 and print it's hexadecimal dump to stdout.
+
+  > fwexpl_app_amd64.exe --target 1 --phys-mem-write 0x86000000 --file mem.bin — Read data stored in mem.bin file and copy it to physical memory starting from 0x86000000.
 
 
 To compile a whole project from the source code:
