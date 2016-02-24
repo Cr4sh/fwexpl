@@ -1,5 +1,5 @@
 
-  System Management Mode exploitation tool and library
+  PC firmware exploitation tool and library
 
 *****************************************************************
 
