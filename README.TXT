@@ -5,23 +5,25 @@
 
   To learn more about this project please read "Exploiting SMM callout vulnerabilities in Lenovo firmware" article in my blog: 
 
+  http://blog.cr4.sh/2016/02/exploiting-smm-callout-vulnerabilities.html
+
 
 Project includes the following components:
 
- * src/libfwexpl — Hardware abstraction library for Windows;
+ * src/libfwexpl — Hardware abstraction library for Windows.
  
- * src/libdsebypass — Windows x64 DSE bypass exploit based on Secret Net 7.4 0day privileges escalation vulnerability;
+ * src/libdsebypass — Windows x64 DSE bypass exploit based on Secret Net 7.4 0day privileges escalation vulnerability.
  
- * src/driver — Kernel mode part of libfwexpl;
+ * src/driver — Kernel mode part of libfwexpl.
  
- * src/application — Application that implements System Management Mode code execution exploit for vulnerability in SystemSmmAhciAspiLegacyRt UEFI SMM driver from Lenovo firmware;
+ * src/application — Application that implements System Management Mode code execution exploit for vulnerability in SystemSmmAhciAspiLegacyRt UEFI SMM driver from Lenovo firmware.
 
 
 Exploit for SystemSmmAhciAspiLegacyRt driver supports the following targets:
 
- * Lenovo ThinkPad T450s with 1.11 firmware;
+ * Lenovo ThinkPad T450s with 1.11 firmware.
 
- * Lenovo ThinkPad X230 with 2.61 firmware;
+ * Lenovo ThinkPad X230 with 2.61 firmware.
 
 However, it seems that vulnerable UEFI SMM driver presents in all of the modern ThinkPads firmware and probably some other Lenovo computers. To add your own model or firmware version support to this exploit — please refer to mentioned article.
 
@@ -56,11 +58,11 @@ Usage examples:
 
 To compile a whole project from the source code:
 
-  1) Download and install WDK for Windows 7 or later;
+  1) Download and install WDK for Windows 7 or later.
 
-  2) Open WDK build environment for 64-bit versions of Windows;
+  2) Open WDK build environment for 64-bit versions of Windows.
 
-  3) Change current directory to src/ and run build_amd64.bat scenario;
+  3) Change current directory to src/ and run build_amd64.bat scenario.
 
 
 Written by:
