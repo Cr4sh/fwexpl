@@ -1,0 +1,19 @@
+OUTNAME = fwexpl_i386
+
+ALL: $(OUTNAME).sys
+
+CC = cl.exe
+
+CFLAGS = /nologo -I".\src" -I"$(DDK_INC_PATH)" -I"$(CRT_INC_PATH)" -DDBG -D_X86_=1 /Gz /GS- /c
+
+include makefile.inc
+
+LN = link.exe
+
+LFLAGS = /LIBPATH:$(DDK_LIB_PATH)\..\i386 /LIBPATH:$(CRT_LIB_PATH)\..\i386 /DEF:driver.def /OPT:REF /OPT:ICF /INCREMENTAL:NO /DEBUG /STACK:0x40000,0x1000 /DRIVER /BASE:0x10000 /ALIGN:0x80 /SUBSYSTEM:native,5.01 /ENTRY:DriverEntry /OUT:..\..\bin\$(OUTNAME).sys
+
+$(OUTNAME).sys: $(LOBJS)        
+    $(LN) $(LFLAGS) $(LOBJS) $(LLIBS)
+
+clean:
+    @del *.obj 

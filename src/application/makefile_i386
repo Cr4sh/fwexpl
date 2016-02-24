@@ -1,0 +1,19 @@
+OUTNAME = fwexpl_app_i386
+
+ALL: $(OUTNAME).exe
+
+CC = cl.exe
+
+CFLAGS = /nologo -I".\src" -I"$(SDK_INC_PATH)" -I"$(CRT_INC_PATH)" -DDBG -D_X86_=1 /Gz /EHsc /c
+
+include makefile.inc
+
+LN = link.exe
+
+LFLAGS = /LIBPATH:$(SDK_LIB_PATH)\..\i386 /LIBPATH:$(CRT_LIB_PATH)\..\i386 /OPT:REF /OPT:ICF /INCREMENTAL:NO /DEBUG /SUBSYSTEM:CONSOLE /OUT:..\..\bin\$(OUTNAME).exe
+
+$(OUTNAME).exe: $(LOBJS)
+    $(LN) $(LFLAGS) $(LOBJS) $(LLIBS) ..\..\lib\libfwexpl_i386.lib
+
+clean:
+    @del *.obj 

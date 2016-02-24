@@ -1,0 +1,19 @@
+OUTNAME = libfwexpl_amd64
+
+ALL: $(OUTNAME).lib
+
+CC = cl.exe
+
+CFLAGS = /nologo -I".\src" -I"$(SDK_INC_PATH)" -I"$(CRT_INC_PATH)" -DDBG -D_AMD64_=1 /Gz /EHsc /c
+
+include makefile.inc
+
+LN = ..\..\tools\lib.exe
+
+LFLAGS = /LIBPATH:$(SDK_LIB_PATH)\..\amd64 /LIBPATH:$(CRT_LIB_PATH)\..\amd64 /OUT:..\..\lib\$(OUTNAME).lib
+
+$(OUTNAME).lib: $(LOBJS)
+    $(LN) $(LFLAGS) $(LOBJS)
+
+clean:
+    @del *.obj 

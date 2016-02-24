@@ -1,0 +1,26 @@
+OUTNAME = libdsebypass_amd64
+
+ALL: $(OUTNAME).lib
+
+CC = cl.exe
+
+CFLAGS = /nologo -I".\src" -I"$(SDK_INC_PATH)" -I"$(CRT_INC_PATH)" -DDBG -D_AMD64_=1 /Gz /EHsc /c
+
+AM = ml64.exe
+
+AMFLAGS = /nologo /c
+
+common_asm.obj: src/asm/amd64/common_asm.asm
+    $(AM) $(AMFLAGS) src/asm/amd64/common_asm.asm
+
+include makefile.inc
+
+LN = ..\..\tools\lib.exe
+
+LFLAGS = /LIBPATH:$(SDK_LIB_PATH)\..\amd64 /LIBPATH:$(CRT_LIB_PATH)\..\amd64 /OUT:..\..\lib\$(OUTNAME).lib
+
+$(OUTNAME).lib: $(LOBJS) common_asm.obj
+    $(LN) $(LFLAGS) $(LOBJS) common_asm.obj
+
+clean:
+    @del *.obj 

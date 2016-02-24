@@ -1,0 +1,19 @@
+OUTNAME = fwexpl_app_amd64
+
+ALL: $(OUTNAME).exe
+
+CC = cl.exe
+
+CFLAGS = /nologo -I".\src" -I"$(SDK_INC_PATH)" -I"$(CRT_INC_PATH)" -DDBG -D_AMD64_=1 /Gz /EHsc /c
+
+include makefile.inc
+
+LN = link.exe
+
+LFLAGS = /LIBPATH:$(SDK_LIB_PATH)\..\amd64 /LIBPATH:$(CRT_LIB_PATH)\..\amd64 /OPT:REF /OPT:ICF /INCREMENTAL:NO /DEBUG /SUBSYSTEM:CONSOLE /OUT:..\..\bin\$(OUTNAME).exe
+
+$(OUTNAME).exe: $(LOBJS)
+    $(LN) $(LFLAGS) $(LOBJS) $(LLIBS) ..\..\lib\libfwexpl_amd64.lib
+
+clean:
+    @del *.obj 

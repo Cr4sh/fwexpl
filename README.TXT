@@ -1,0 +1,71 @@
+
+  System Management Mode exploitation tool and library
+
+*****************************************************************
+
+  To learn more about this project please read "Exploiting SMM callout vulnerabilities in Lenovo firmware" article in my blog: 
+
+
+Project includes the following components:
+
+ * src/libfwexpl — Hardware abstraction library for Windows;
+ 
+ * src/libdsebypass — Windows x64 DSE bypass exploit based on Secret Net 7.4 0day privileges escalation vulnerability;
+ 
+ * src/driver — Kernel mode part of libfwexpl;
+ 
+ * src/application — Application that implements System Management Mode code execution exploit for vulnerability in SystemSmmAhciAspiLegacyRt UEFI SMM driver from Lenovo firmware;
+
+
+Exploit for SystemSmmAhciAspiLegacyRt driver supports the following targets:
+
+ * Lenovo ThinkPad T450s with 1.11 firmware;
+
+ * Lenovo ThinkPad X230 with 2.61 firmware;
+
+However, it seems that vulnerable UEFI SMM driver presents in all of the modern ThinkPads firmware and probably some other Lenovo computers. To add your own model or firmware version support to this exploit — please refer to mentioned article.
+
+
+To run exploit from command line you can use bin/fwexpl_app_amd64.exe program, here's the list of available command line options:
+
+  --target <N> — Select specific target where <N> is a target number.
+  
+  --target-list — Print all available targets information.
+  
+  --phys-mem-read <addr> — Read physical memory starting from specified address.
+  
+  --phys-mem-write <addr> — Write physical memory starting from specified address.
+  
+  --length <bytes> — Number of bytes to read or write for --phys-mem-read and --whys-mem-write.
+  
+  --file <path> — Memory dump path to read or write, in case of --whys-mem-read this parameter is optional and when it's not specified — application will print a hex dump of physical memory to stdout.
+  
+  --exec <addr> — Execute SMM code at specified physical memory address.
+
+  --dse-bypass — Install and exploit Secret Net 7.4 driver to bypass Windows x64 DSE.
+
+Please note, that --dse-bypass option requires sncc0.sys file in the same directory with fwexpl_app_amd64.exe, this file can be downloaded here: https://mega.nz/#!ydEnSabK!H63Yw44POR0dO02WAh-f1eqgHaWeeqlqP75_XwIzw_4
+
+
+Usage examples:
+
+  > fwexpl_app_amd64.exe --target 1 — Test run of SMM exploit without payload;
+
+  > fwexpl_app_amd64.exe --target 1 --phys-mem-read 0x86000000 --size 0x1000 — Read 4096 bytes of physical memory starting from 0x86000000 and print it's hexadecimal dump to stdout.
+
+
+To compile a whole project from the source code:
+
+  1) Download and install WDK for Windows 7 or later;
+
+  2) Open WDK build environment for 64-bit versions of Windows;
+
+  3) Change current directory to src/ and run build_amd64.bat scenario;
+
+
+Written by:
+Dmytro Oleksiuk (aka Cr4sh)
+
+cr4sh0@gmail.com
+http://blog.cr4.sh
+
