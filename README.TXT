@@ -38,9 +38,9 @@ To run exploit from command line you can use bin/fwexpl_app_amd64.exe program, h
   
   --phys-mem-write <addr> — Write physical memory starting from specified address.
   
-  --length <bytes> — Number of bytes to read or write for --phys-mem-read and --whys-mem-write.
+  --length <bytes> — Number of bytes to read or write for --phys-mem-read and --phys-mem-write.
   
-  --file <path> — Memory dump path to read or write, in case of --whys-mem-read this parameter is optional and when it's not specified — application will print a hex dump of physical memory to stdout.
+  --file <path> — Memory dump path to read or write, in case of --phys-mem-read this parameter is optional and when it's not specified — application will print a hex dump of physical memory to stdout.
   
   --exec <addr> — Execute SMM code at specified physical memory address.
 
