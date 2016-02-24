@@ -3,9 +3,9 @@
 
 *****************************************************************
 
-  To learn more about this project please read "Exploiting SMM callout vulnerabilities in Lenovo firmware" article in my blog: 
+To learn more about this project please read "Exploiting SMM callout vulnerabilities in Lenovo firmware" article in my blog: 
 
-  http://blog.cr4.sh/2016/02/exploiting-smm-callout-vulnerabilities.html
+http://blog.cr4.sh/2016/02/exploiting-smm-callout-vulnerabilities.html
 
 
 Project includes the following components:
@@ -16,7 +16,7 @@ Project includes the following components:
  
  * src/driver — Kernel mode part of libfwexpl.
  
- * src/application — Application that implements System Management Mode code execution exploit for vulnerability in SystemSmmAhciAspiLegacyRt UEFI SMM driver from Lenovo firmware.
+ * src/application — Application that implements System Management Mode code execution exploit for 1day vulnerability in SystemSmmAhciAspiLegacyRt UEFI SMM driver from Lenovo firmware.
 
 
 Exploit for SystemSmmAhciAspiLegacyRt driver supports the following targets:
@@ -26,6 +26,10 @@ Exploit for SystemSmmAhciAspiLegacyRt driver supports the following targets:
  * Lenovo ThinkPad X230 with 2.61 firmware.
 
 However, it seems that vulnerable UEFI SMM driver presents in all of the modern ThinkPads firmware and probably some other Lenovo computers. To add your own model or firmware version support to this exploit — please refer to mentioned article.
+
+Lenovo security advisory and patches information:
+
+https://support.lenovo.com/sg/en/product_security/smm_attack
 
 
 To run exploit from command line you can use bin/fwexpl_app_amd64.exe program, here's the list of available command line options:
