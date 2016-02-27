@@ -32,6 +32,11 @@ Lenovo security advisory and patches information:
 https://support.lenovo.com/sg/en/product_security/smm_attack
 
 
+Standalone version of local privileges escalation exploit for Secret Net 7.4 and Secret Net Studio 8.0 0day vulnerability is available as separate project:
+
+https://github.com/Cr4sh/secretnet_expl
+
+
 To run exploit from command line you can use bin/fwexpl_app_amd64.exe program, here's the list of available command line options:
 
   --target <N> — Select specific target where <N> is a target number.
