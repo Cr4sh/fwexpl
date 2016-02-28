@@ -10,20 +10,20 @@ http://blog.cr4.sh/2016/02/exploiting-smm-callout-vulnerabilities.html
 
 Project includes the following components:
 
- * src/libfwexpl — Hardware abstraction library for Windows (see include/libfwexpl.h).
+  * src/libfwexpl — Hardware abstraction library for Windows (see include/libfwexpl.h).
  
- * src/libdsebypass — Windows x64 DSE bypass exploit based on Secret Net 7.4 0day privileges escalation vulnerability (see include/libdsebypass.h).
+  * src/libdsebypass — Windows x64 DSE bypass exploit based on Secret Net 7.4 0day privileges escalation vulnerability (see include/libdsebypass.h).
  
- * src/driver — Kernel mode part of libfwexpl.
+  * src/driver — Kernel mode part of libfwexpl.
  
- * src/application — Application that implements System Management Mode code execution exploit for 1day vulnerability in SystemSmmAhciAspiLegacyRt UEFI SMM driver from Lenovo firmware.
+  * src/application — Application that implements System Management Mode code execution exploit for 1day vulnerability in SystemSmmAhciAspiLegacyRt UEFI SMM driver of Lenovo firmware.
 
 
 Exploit for SystemSmmAhciAspiLegacyRt driver supports the following targets:
 
- * Lenovo ThinkPad T450s with 1.11 firmware.
+  * Lenovo ThinkPad T450s with 1.11 firmware.
 
- * Lenovo ThinkPad X230 with 2.61 firmware.
+  * Lenovo ThinkPad X230 with 2.61 firmware.
 
 However, it seems that vulnerable UEFI SMM driver presents in all of the modern ThinkPads firmware and probably some other Lenovo computers. To add your own model or firmware version support to this exploit — please refer to mentioned article.
 
@@ -37,7 +37,7 @@ Standalone version of local privileges escalation exploit for Secret Net 7.4 and
 https://github.com/Cr4sh/secretnet_expl
 
 
-To run exploit from command line you can use bin/fwexpl_app_amd64.exe program, here's the list of available command line options:
+To run System Management Mode exploit from command line you can use bin/fwexpl_app_amd64.exe program, here's the list of available command line options:
 
   --target <N> — Select specific target where <N> is a target number.
   
