@@ -20,3 +20,6 @@ NTSTATUS HwSmiInvoke(UCHAR Code);
 NTSTATUS HwMemAlloc(PULONG64 Address, ULONG Size);
 NTSTATUS HwMemFree(ULONG64 Address);
 NTSTATUS HwGetPhysAddr(ULONG64 Address, PULONG64 PhysicalAddress);
+
+NTSTATUS HwMsrGet(ULONG Register, PULONG64 Value);
+NTSTATUS HwMsrSet(ULONG Register, ULONG64 Value);

@@ -272,7 +272,7 @@ int _tmain(int argc, _TCHAR* argv[])
     int ret = -1, target = -1;    
     SMM_HANDLER_CONTEXT context, *c = &context;
     const char *data_file = NULL;
-    bool use_dse_bypass = false;
+    bool use_dse_bypass = false, use_test = false;
 
     memset(&context, 0, sizeof(context));
     context.op = SMM_HANDLER_OP_NONE;
@@ -357,7 +357,7 @@ int _tmain(int argc, _TCHAR* argv[])
         {
             // print available targets and exit
             expl_lenovo_SystemSmmAhciAspiLegacyRt_targets_info();
-            goto _end;
+            return 0;
         }
         else if (!strcmp(argv[i], "--file") && i < argc - 1)
         {
@@ -374,8 +374,7 @@ int _tmain(int argc, _TCHAR* argv[])
         else if (!strcmp(argv[i], "--test"))
         {
             // run libfwexpl tests
-            test();
-            goto _end;
+            use_test = true;
         }
     }
 
@@ -418,7 +417,14 @@ int _tmain(int argc, _TCHAR* argv[])
 
     // initialize HAL
     if (uefi_expl_init(NULL, use_dse_bypass))
-    {         
+    {    
+        if (use_test)
+        {
+            // run tests and exit
+            test();
+            goto _end;
+        }
+
         // determinate memory size required for SMM_HANDLER_CONTEXT
         unsigned int new_size = sizeof(SMM_HANDLER_CONTEXT);        
 

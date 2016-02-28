@@ -238,4 +238,18 @@ NTSTATUS HwGetPhysAddr(ULONG64 Address, PULONG64 PhysicalAddress)
     return STATUS_SUCCESS;
 }
 //--------------------------------------------------------------------------------------
+NTSTATUS HwMsrGet(ULONG Register, PULONG64 Value)
+{   
+    *Value = _msr_get(Register);
+
+    return STATUS_SUCCESS;
+}
+//--------------------------------------------------------------------------------------
+NTSTATUS HwMsrSet(ULONG Register, ULONG64 Value)
+{
+    _msr_set(Register, Value);
+
+    return STATUS_SUCCESS;
+}
+//--------------------------------------------------------------------------------------
 // EoF

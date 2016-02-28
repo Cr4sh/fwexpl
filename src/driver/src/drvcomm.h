@@ -12,7 +12,10 @@
 #define DRV_CTL_MEM_ALLOC       0x08
 #define DRV_CTL_MEM_FREE        0x09
 #define DRV_CTL_PHYS_ADDR       0x0a
-#define DRV_CTL_RESTORE_CR4     0x0b
+#define DRV_CTL_MSR_GET         0x0b
+#define DRV_CTL_MSR_SET         0x0c
+
+#define DRV_CTL_RESTORE_CR4     0x0d
 
 #pragma pack(push, 1)
 typedef struct _REQUEST_BUFFER
@@ -96,6 +99,20 @@ typedef struct _REQUEST_BUFFER
             ULONG64 PhysicalAddress;
 
         } PhysAddr;
+
+        struct // for DRV_CTL_MSR_GET
+        {
+            ULONG Register;
+            ULONG64 Value;
+
+        } MsrGet;
+
+        struct // for DRV_CTL_MSR_SET
+        {
+            ULONG Register;
+            ULONG64 Value;
+
+        } MsrSet;
     };
     
 } REQUEST_BUFFER,

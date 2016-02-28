@@ -489,4 +489,47 @@ bool uefi_expl_phys_addr(unsigned long long addr, unsigned long long *phys_addr)
     return false;
 }
 //--------------------------------------------------------------------------------------
+bool uefi_expl_msr_get(unsigned int reg, unsigned long long *val)
+{
+    if (m_hDevice == NULL)
+    {
+        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
+        return false;
+    }
+
+    // allocate driver request buffer
+    DRV_REQUEST_INIT(Request, DRV_CTL_MSR_GET);
+
+    Request.MsrGet.Register = reg;
+
+    if (uefi_drv_device_request(m_hDevice, &Request, sizeof(Request)))
+    {
+        if (val)
+        {
+            *val = Request.MsrGet.Value;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+//--------------------------------------------------------------------------------------
+bool uefi_expl_msr_set(unsigned int reg, unsigned long long val)
+{
+    if (m_hDevice == NULL)
+    {
+        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
+        return false;
+    }
+
+    // allocate driver request buffer
+    DRV_REQUEST_INIT(Request, DRV_CTL_MSR_SET);
+
+    Request.MsrSet.Register = reg;
+    Request.MsrSet.Value = val;
+
+    return uefi_drv_device_request(m_hDevice, &Request, sizeof(Request)) ? true : false;
+}
+//--------------------------------------------------------------------------------------
 // EoF

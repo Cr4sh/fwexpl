@@ -1,12 +1,7 @@
-
-typedef enum _data_width
-{
-    U8, U16, U32, U64
-
-} data_width;
+#ifndef LIBFWEXPL_H
+#define LIBFWEXPL_H
 
 #define PAGE_SIZE 0x1000
-
 
 // make PCI address from bus, device, function and register offset
 #define PCI_ADDR(_bus_, _dev_, _func_, _addr_)  \
@@ -16,6 +11,12 @@ typedef enum _data_width
                    ((_func_) << 8) |            \
                    ((_addr_) & 0xfc) | ((unsigned int)0x80000000))
 
+
+typedef enum _data_width
+{
+    U8, U16, U32, U64
+
+} data_width;
 
 typedef void (* UEFI_EXPL_SMM_HANDLER)(void *context);
 
@@ -28,8 +29,14 @@ typedef struct _UEFI_EXPL_SMM_SHELLCODE_CONTEXT
 } UEFI_EXPL_SMM_SHELLCODE_CONTEXT,
 *PUEFI_EXPL_SMM_SHELLCODE_CONTEXT;
 
+
+#ifdef __cplusplus
+
 extern "C"
 {
+
+#endif
+
 
 // initialize kernel driver
 bool uefi_expl_init(char *driver_path, bool use_dse_bypass);
@@ -75,4 +82,16 @@ bool uefi_expl_mem_free(unsigned long long addr);
 // convert virtual address to physical memory address
 bool uefi_expl_phys_addr(unsigned long long addr, unsigned long long *phys_addr);
 
+// get model specific register value
+bool uefi_expl_msr_get(unsigned int reg, unsigned long long *val);
+
+// set model specific register value
+bool uefi_expl_msr_set(unsigned int reg, unsigned long long val);
+
+
+#ifdef __cplusplus
+
 }
+
+#endif
+#endif // LIBFWEXPL_H

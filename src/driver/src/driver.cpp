@@ -143,6 +143,19 @@ NTSTATUS DriverDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                             break;
                         }
 
+                    case DRV_CTL_MSR_GET:
+                        {
+                            // get MSR value
+                            ns = HwMsrGet(Buff->MsrGet.Register, &Buff->MsrGet.Value);
+                            break;
+                        }
+
+                    case DRV_CTL_MSR_SET:
+                        {
+                            // set MSR value
+                            ns = HwMsrSet(Buff->MsrSet.Register, Buff->MsrSet.Value);
+                            break;
+                        }
 #ifdef USE_DSE_BYPASS
 
                     case DRV_CTL_RESTORE_CR4:
