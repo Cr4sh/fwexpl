@@ -42,18 +42,22 @@ To run System Management Mode exploit from command line you can use bin/fwexpl_a
   --target <N> — Select specific target where <N> is a target number.
   
   --target-list — Print all available targets information.
+
+  --smram-dump — Determinate current SMRAM address and dump it's contents to file.
   
   --phys-mem-read <addr> — Read physical memory starting from specified address.
   
   --phys-mem-write <addr> — Write physical memory starting from specified address.
   
-  --length <bytes> — Number of bytes to read or write for --phys-mem-read and --phys-mem-write.
+  --length <bytes> — Number of bytes to read or write for --phys-mem-read and --phys-mem-write.  
   
-  --file <path> — Memory dump path to read or write, in case of --phys-mem-read this parameter is optional and when it's not specified — application will print a hex dump of physical memory to stdout.
+  --file <path> — Memory dump path to read or write, in case of --phys-mem-read this parameter is optional and when it's not specified — application will print a hex dump of physical memory to stdout. In case of --smram-dump this parameter is mandatory.
   
   --exec <addr> — Execute SMM code at specified physical memory address.
 
-  --dse-bypass — Install and exploit Secret Net 7.4 driver to bypass Windows x64 DSE.
+  --dse-bypass — Install and exploit Secret Net 7.4 driver to bypass Windows x64 DSE.  
+
+  --test — Run some basic libfwexpl tests.
 
 Please note, that --dse-bypass option requires sncc0.sys file (digitally signed vulnerable driver from Secret Net) in the same directory with fwexpl_app_amd64.exe, this file can be downloaded here: 
 

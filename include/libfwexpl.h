@@ -82,6 +82,7 @@ bool uefi_expl_mem_free(unsigned long long addr);
 // convert virtual address to physical memory address
 bool uefi_expl_phys_addr(unsigned long long addr, unsigned long long *phys_addr);
 
+
 // get model specific register value
 bool uefi_expl_msr_get(unsigned int reg, unsigned long long *val);
 
