@@ -1,16 +1,5 @@
 #include "stdafx.h"
 
-extern "C" 
-{
-ULONG m_SDT_NtProtectVirtualMemory = 0;
-
-#ifdef _AMD64_
-// need for system services calling on x64 kernels
-PVOID _KiServiceInternal = 0;
-#endif
-
-}
-
 PVOID m_DriverBase = NULL;
 PDEVICE_OBJECT m_DeviceObject = NULL;
 UNICODE_STRING m_usDosDeviceName, m_usDeviceName;
@@ -173,18 +162,9 @@ NTSTATUS DriverDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                                 {
                                     // bind thread to specific processor
                                     KeSetSystemAffinityThread(Mask);
-#ifdef _X86_        
-                                    // read CR4 register value
-                                    __asm
-                                    {
-                                        _emit   0x0F
-                                        _emit   0x20
-                                        _emit   0xE0 /* mov eax, cr4 */
-                                        mov     cr4_val, eax
-                                    }
-#else _AMD64_
+
+                                    // read CR4 register of other CPU
                                     cr4_val = _cr4_get();
-#endif
                                     break;
                                 }
                             }
@@ -193,33 +173,13 @@ NTSTATUS DriverDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                             {
                                 // bind thread to first processor
                                 KeSetSystemAffinityThread(0x00000001);
-#ifdef _X86_        
-                                // read CR4 register value
-                                __asm
-                                {
-                                    _emit   0x0F
-                                    _emit   0x20
-                                    _emit   0xE0 /* mov eax, cr4 */
-                                    mov     cr4_current, eax
-                                }
-#else _AMD64_
-                                cr4_current = _cr4_get();
-#endif                
-                                if (cr4_current != cr4_val)
+
+                                if ((cr4_current = _cr4_get()) != cr4_val)
                                 {
                                     DbgMsg(__FILE__, __LINE__, "Restoring CR4 value from 0x%.8x to 0x%.8x\n", cr4_current, cr4_val);
-#ifdef _X86_
-                                    // restore CR4 register value
-                                    __asm
-                                    {
-                                        mov     eax, cr4_val
-                                        _emit   0x0F
-                                        _emit   0x22
-                                        _emit   0xE0 /* mov cr4, eax */
-                                    }
-#else _AMD64_
+
+                                    // restore CR4 register of current CPU
                                     _cr4_set(cr4_val);
-#endif
                                 }
                                 else
                                 {
