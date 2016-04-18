@@ -55,8 +55,6 @@
         }
 */
 
-#define MAX_SMI_NUM 0xff
-
 /*
     List of model and firmware version specific constants for different targets.
 */
@@ -284,7 +282,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
                                 ret = true;
                             }
 
-                            printf(__FUNCTION__"(): Exploitation %s\n", ret ? "success" : "false");                            
+                            printf(__FUNCTION__"(): Exploitation %s\n", ret ? "success" : "fails");                            
                         }
                         else
                         {

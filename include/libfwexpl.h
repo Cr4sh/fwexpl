@@ -3,6 +3,8 @@
 
 #define PAGE_SIZE 0x1000
 
+#define MAX_SMI_NUM 255
+
 // make PCI address from bus, device, function and register offset
 #define PCI_ADDR(_bus_, _dev_, _func_, _addr_)  \
                                                 \
