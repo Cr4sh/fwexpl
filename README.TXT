@@ -39,9 +39,13 @@ https://github.com/Cr4sh/secretnet_expl
 
 To run System Management Mode exploit from command line you can use bin/fwexpl_app_amd64.exe program, here's the list of available command line options:
 
-  --target <N> — Select specific target where <N> is a target number.
+  --target <N> — Select known target where <N> is a target number.
   
-  --target-list — Print all available targets information.
+  --target-list — Print all known targets information.
+
+  --target-addr - Use manual address of EFI_BOOT_SERVICES.LocateProtocol field for SystemSmmAhciAspiLegacyRt exploit. This option will be ignored if --target was specified.
+
+  --target-smi - Use manual SMI handler number for SystemSmmAhciAspiLegacyRt exploit. This option will be ignored if --target was specified. If --target-addr was specified without --target-smi — SystemSmmAhciAspiLegacyRt exploit will check all of the possible SMI handlers from 0 to 255.
 
   --smram-dump — Determinate current SMRAM address and dump it contents to file.
   
