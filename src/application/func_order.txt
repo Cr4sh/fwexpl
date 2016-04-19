@@ -1,0 +1,5 @@
+_r0_proc_begin
+kernel_expl_handler
+LdrGetProcAddress
+LdrProcessRelocs
+_r0_proc_end
