@@ -3,11 +3,11 @@
 // make crt functions inline
 #pragma intrinsic(strcpy)
 
-PVOID m_KernelBase = NULL;
+PVOID m_Kernel = NULL;
 //--------------------------------------------------------------------------------------
 PVOID NTAPI GetKernelBase(void)
 {
-    return m_KernelBase;
+    return m_Kernel;
 }
 //--------------------------------------------------------------------------------------
 ULONG NTAPI ImportHash(char *Str)

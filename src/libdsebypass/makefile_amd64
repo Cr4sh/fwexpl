@@ -4,7 +4,7 @@ ALL: $(OUTNAME).lib
 
 CC = cl.exe
 
-CFLAGS = /nologo -I".\src" -I"$(SDK_INC_PATH)" -I"$(CRT_INC_PATH)" -DDBG -D_AMD64_=1 /Gz /EHsc /c
+CFLAGS = /nologo -I".\src" -I"$(SDK_INC_PATH)" -I"$(CRT_INC_PATH)" -DDBG -D_AMD64_=1 /Gz /Gy /GS- /EHsc /c
 
 AM = ml64.exe
 

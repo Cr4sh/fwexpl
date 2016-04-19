@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-PVOID m_DriverBase = NULL;
+PVOID m_Driver = NULL;
 PDEVICE_OBJECT m_DeviceObject = NULL;
 UNICODE_STRING m_usDosDeviceName, m_usDeviceName;
 //--------------------------------------------------------------------------------------
@@ -260,7 +260,7 @@ NTSTATUS DriverEntry(
 #ifdef USE_DSE_BYPASS
 
     // check if driver image was loaded by DSE bypass exploit
-    if (RegistryPath == NULL && m_DriverBase)
+    if (RegistryPath == NULL && m_Driver)
     {
         if (GetKernelBase() == NULL)
         {
@@ -272,7 +272,7 @@ NTSTATUS DriverEntry(
             Here we need to process our own import table because image
             was loaded using libdsebypass instead of kernel PE loader.
         */
-        if (!RuntimeProcessImports(m_DriverBase))
+        if (!RuntimeProcessImports(m_Driver))
         {
             return STATUS_UNSUCCESSFUL;
         }

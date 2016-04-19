@@ -1,4 +1,4 @@
 EXPORTS
-m_KernelBase
-m_DriverBase
+m_Kernel
+m_Driver
 

@@ -1,5 +1,8 @@
 #include "stdafx.h"
 
+// make crt functions inline
+#pragma intrinsic(strcmp)
+
 #ifdef _NTDDK_INCLUDED_
 
 #define LdrAlloc(_len_) ExAllocatePool(NonPagedPool, (_len_))

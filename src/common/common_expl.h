@@ -1,37 +1,4 @@
 
-typedef struct _HAL_DISPATCH
-{
-    ULONG   Version;
-
-    PVOID   HalQuerySystemInformation;
-    PVOID   HalSetSystemInformation;
-    PVOID   HalQueryBusSlots;
-    ULONG   Spare1;
-    PVOID   HalExamineMBR;
-    PVOID   HalIoAssignDriveLetters;
-    PVOID   HalIoReadPartitionTable;
-    PVOID   HalIoSetPartitionInformation;
-    PVOID   HalIoWritePartitionTable;
-
-    PVOID   HalReferenceHandlerForBus;
-    PVOID   HalReferenceBusHandler;
-    PVOID   HalDereferenceBusHandler;
-
-    PVOID   HalInitPnpDriver;
-    PVOID   HalInitPowerManagement;
-
-    PVOID   HalGetDmaAdapter;
-    PVOID   HalGetInterruptTranslator;
-
-    PVOID   HalStartMirroring;
-    PVOID   HalEndMirroring;
-    PVOID   HalMirrorPhysicalMemory;
-    PVOID   HalEndOfBoot;
-    PVOID   HalMirrorVerify;
-
-} HAL_DISPATCH,
-*PHAL_DISPATCH;
-
 //
 // CR4 register bits
 //
@@ -85,6 +52,45 @@ typedef struct _HAL_DISPATCH
 //
 #define CPUID_FSGSBASE              0x00000001
 
+
+typedef struct _HAL_DISPATCH
+{
+    ULONG   Version;
+
+    PVOID   HalQuerySystemInformation;
+    PVOID   HalSetSystemInformation;
+    PVOID   HalQueryBusSlots;
+    ULONG   Spare1;
+    PVOID   HalExamineMBR;
+    PVOID   HalIoAssignDriveLetters;
+    PVOID   HalIoReadPartitionTable;
+    PVOID   HalIoSetPartitionInformation;
+    PVOID   HalIoWritePartitionTable;
+
+    PVOID   HalReferenceHandlerForBus;
+    PVOID   HalReferenceBusHandler;
+    PVOID   HalDereferenceBusHandler;
+
+    PVOID   HalInitPnpDriver;
+    PVOID   HalInitPowerManagement;
+
+    PVOID   HalGetDmaAdapter;
+    PVOID   HalGetInterruptTranslator;
+
+    PVOID   HalStartMirroring;
+    PVOID   HalEndMirroring;
+    PVOID   HalMirrorPhysicalMemory;
+    PVOID   HalEndOfBoot;
+    PVOID   HalMirrorVerify;
+
+} HAL_DISPATCH,
+*PHAL_DISPATCH;
+
+
+DWORD64 VA_to_PT(DWORD64 Addr);
+DWORD64 VA_to_PD(DWORD64 Addr);
+DWORD64 VA_to_PDPT(DWORD64 Addr);
+DWORD64 VA_to_PML4(DWORD64 Addr);
 
 PVOID KernelGetModuleBase(char *lpszModuleName);
 PVOID KernelGetProcAddr(char *lpszProcName);

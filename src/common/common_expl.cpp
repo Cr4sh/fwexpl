@@ -1,5 +1,53 @@
 #include "stdafx.h"
 //--------------------------------------------------------------------------------------
+#ifdef _AMD64_
+
+DWORD64 VA_to_PT(DWORD64 Addr)
+{
+    Addr >>= 9;
+    Addr >>= 3;
+    Addr <<= 3;
+    Addr &= 0xfffff6ffffffffff;
+    Addr |= 0xfffff68000000000;
+    
+    return Addr;
+}
+
+DWORD64 VA_to_PD(DWORD64 Addr)
+{
+    Addr >>= 18;
+    Addr >>= 3;
+    Addr <<= 3;
+    Addr &= 0xfffff6fb7fffffff;
+    Addr |= 0xfffff6fb40000000;
+    
+    return Addr;
+}
+
+DWORD64 VA_to_PDPT(DWORD64 Addr)
+{
+    Addr >>= 27;
+    Addr >>= 3;
+    Addr <<= 3;
+    Addr &= 0xfffff6fb7dbfffff;
+    Addr |= 0xfffff6fb7da00000;
+    
+    return Addr;
+}
+
+DWORD64 VA_to_PML4(DWORD64 Addr)
+{
+    Addr >>= 36;
+    Addr >>= 3;
+    Addr <<= 3;
+    Addr &= 0xfffff6fb7dbedfff;
+    Addr |= 0xfffff6fb7dbed000;
+    
+    return Addr;
+}
+
+#endif // _AMD64_
+//--------------------------------------------------------------------------------------
 PVOID KernelGetModuleBase(char *lpszModuleName)
 {
     PVOID ModuleBase = NULL;

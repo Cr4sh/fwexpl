@@ -31,8 +31,12 @@
 
 #define LDR_ORDINAL(_val_) ((char *)(_val_))
 
+extern "C"
+{
+// functions used in ring0 shellcode
 PVOID NTAPI LdrGetProcAddress(PVOID Image, char *FunctionName);
 BOOLEAN NTAPI LdrProcessRelocs(PVOID Image, PVOID NewBase);
+}
 
 BOOLEAN LdrImageFromData(PVOID Data, ULONG dwDataSize, PVOID *Image, PULONG pdwImageSize);
 
