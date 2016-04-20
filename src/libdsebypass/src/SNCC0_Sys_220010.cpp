@@ -251,7 +251,7 @@ BOOL RopGadgetInit(void)
             DbgMsg(__FILE__, __LINE__, "LoadLibraryEx() ERROR %d\n", GetLastError());
         }
 
-        LocalFree(Info);
+        M_FREE(Info);
     }
 
     return bRet;

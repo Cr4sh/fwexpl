@@ -17,8 +17,11 @@
 #include "../../common/ntdll_defs.h"
 #include "../../common/ntdll_undocnt.h"
 #include "../../common/common.h"
+#include "../../common/common_expl.h"
+#include "../../common/debug.h"
 #include "../../common/hexdump.h"
 
 #include "../../../include/libfwexpl.h"
 
+#include "windows_specific.h"
 #include "lenovo_SystemSmmAhciAspiLegacyRt.h"

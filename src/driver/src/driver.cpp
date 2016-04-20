@@ -41,15 +41,49 @@ NTSTATUS DriverDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                             break;
                         }
 
+                    case DRV_CTL_VIRT_MEM_READ:
+                        {
+                            if (InSize >= sizeof(REQUEST_BUFFER) + Buff->MemRead.Size)
+                            {
+                                // read virtual memory                                                            
+                                memcpy(
+                                    Buff->MemRead.Data,
+                                    (PVOID)Buff->MemRead.Address,
+                                    Buff->MemRead.Size                               
+                                );
+
+                                ns = STATUS_SUCCESS;
+                            }
+
+                            break;
+                        }
+
+                    case DRV_CTL_VIRT_MEM_WRITE:
+                        {
+                            if (InSize >= sizeof(REQUEST_BUFFER) + Buff->MemWrite.Size)
+                            {
+                                // write virtual memory
+                                memcpy(
+                                    (PVOID)Buff->MemWrite.Address,
+                                    Buff->MemWrite.Data,
+                                    Buff->MemWrite.Size                                    
+                                );
+
+                                ns = STATUS_SUCCESS;
+                            }
+
+                            break;
+                        }
+
                     case DRV_CTL_PHYS_MEM_READ:
                         {
-                            if (InSize >= sizeof(REQUEST_BUFFER) + Buff->PhysMemRead.Size)
+                            if (InSize >= sizeof(REQUEST_BUFFER) + Buff->MemRead.Size)
                             {
                                 // read physical memory
                                 ns = HwPhysMemRead(
-                                    Buff->PhysMemRead.Address,
-                                    Buff->PhysMemRead.Size, 
-                                    Buff->PhysMemRead.Data
+                                    Buff->MemRead.Address,
+                                    Buff->MemRead.Size, 
+                                    Buff->MemRead.Data
                                 );
                             }
                             
@@ -58,13 +92,13 @@ NTSTATUS DriverDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
                     case DRV_CTL_PHYS_MEM_WRITE:
                         {
-                            if (InSize >= sizeof(REQUEST_BUFFER) + Buff->PhysMemWrite.Size)
+                            if (InSize >= sizeof(REQUEST_BUFFER) + Buff->MemWrite.Size)
                             {
                                 // write physical memory
                                 ns = HwPhysMemWrite(
-                                    Buff->PhysMemWrite.Address,
-                                    Buff->PhysMemWrite.Size,
-                                    Buff->PhysMemWrite.Data
+                                    Buff->MemWrite.Address,
+                                    Buff->MemWrite.Size,
+                                    Buff->MemWrite.Data
                                 );
                             }
 

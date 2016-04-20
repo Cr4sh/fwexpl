@@ -236,6 +236,80 @@ static DWORD uefi_expl_data_size(data_width width)
     return 0;
 }
 //--------------------------------------------------------------------------------------
+bool uefi_expl_virt_mem_read(unsigned long long address, int size, unsigned char *buff)
+{
+    bool bRet = false;
+    DWORD dwRequestSize = sizeof(REQUEST_BUFFER) + size;
+
+    if (m_hDevice == NULL)
+    {
+        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
+        return false;
+    }
+
+    // allocate driver request buffer
+    DRV_REQUEST_INIT_EX(pRequest, DRV_CTL_VIRT_MEM_READ, dwRequestSize);
+
+    if (pRequest == NULL)
+    {
+        DbgMsg(__FILE__, __LINE__, "M_ALLOC() ERROR %d\n", GetLastError());
+        return false;
+    }
+
+    pRequest->MemRead.Address = address;
+    pRequest->MemRead.Size = size;
+
+    // send memory read request to the driver
+    if (uefi_drv_device_request(m_hDevice, pRequest, dwRequestSize))
+    {
+        // copy data that was returned by driver
+        memcpy(buff, &pRequest->MemRead.Data, size);
+
+        bRet = true;
+    }
+
+    M_FREE(pRequest);
+
+    return bRet;
+}
+//--------------------------------------------------------------------------------------
+bool uefi_expl_virt_mem_write(unsigned long long address, int size, unsigned char *buff)
+{
+    bool bRet = false;
+    DWORD dwRequestSize = sizeof(REQUEST_BUFFER) + size;
+
+    if (m_hDevice == NULL)
+    {
+        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
+        return false;
+    }
+
+    // allocate driver request buffer
+    DRV_REQUEST_INIT_EX(pRequest, DRV_CTL_VIRT_MEM_WRITE, dwRequestSize);
+
+    if (pRequest == NULL)
+    {
+        DbgMsg(__FILE__, __LINE__, "M_ALLOC() ERROR %d\n", GetLastError());
+        return false;
+    }
+
+    pRequest->MemWrite.Address = address;
+    pRequest->MemWrite.Size = size;
+
+    // pass memory data to the driver
+    memcpy(&pRequest->MemWrite.Data, buff, size);
+
+    // send memory write request to the driver
+    if (uefi_drv_device_request(m_hDevice, pRequest, dwRequestSize))
+    {        
+        bRet = true;
+    }
+
+    M_FREE(pRequest);
+
+    return bRet;
+}
+//--------------------------------------------------------------------------------------
 bool uefi_expl_phys_mem_read(unsigned long long address, int size, unsigned char *buff)
 {
     bool bRet = false;
@@ -256,14 +330,14 @@ bool uefi_expl_phys_mem_read(unsigned long long address, int size, unsigned char
         return false;
     }
 
-    pRequest->PhysMemRead.Address = address;
-    pRequest->PhysMemRead.Size = size;
+    pRequest->MemRead.Address = address;
+    pRequest->MemRead.Size = size;
 
     // send memory read request to the driver
     if (uefi_drv_device_request(m_hDevice, pRequest, dwRequestSize))
     {
         // copy data that was returned by driver
-        memcpy(buff, &pRequest->PhysMemRead.Data, size);
+        memcpy(buff, &pRequest->MemRead.Data, size);
 
         bRet = true;
     }
@@ -293,11 +367,11 @@ bool uefi_expl_phys_mem_write(unsigned long long address, int size, unsigned cha
         return false;
     }
 
-    pRequest->PhysMemWrite.Address = address;
-    pRequest->PhysMemWrite.Size = size;
+    pRequest->MemWrite.Address = address;
+    pRequest->MemWrite.Size = size;
 
     // pass memory data to the driver
-    memcpy(&pRequest->PhysMemWrite.Data, buff, size);
+    memcpy(&pRequest->MemWrite.Data, buff, size);
 
     // send memory write request to the driver
     if (uefi_drv_device_request(m_hDevice, pRequest, dwRequestSize))

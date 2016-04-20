@@ -455,7 +455,7 @@ int _tmain(int argc, _TCHAR* argv[])
     int ret = -1, target = -1;
     unsigned int length = 0;        
     const char *data_file = NULL;
-    bool use_dse_bypass = false, use_test = false, use_smram_dump = false, use_custom_target = false;
+    bool use_dse_bypass = false, use_test = false, use_smram_dump = false;
     
     SMM_HANDLER_CONTEXT context;
     memset(&context, 0, sizeof(context));
@@ -555,7 +555,6 @@ int _tmain(int argc, _TCHAR* argv[])
                 return -1;
             }
 
-            use_custom_target = true;
             i += 1;
         }
         else if (!strcmp(argv[i], "--target-smi") && i < argc - 1)
@@ -569,7 +568,6 @@ int _tmain(int argc, _TCHAR* argv[])
                 return -1;
             }
 
-            use_custom_target = true;
             i += 1;
         }
         else if (!strcmp(argv[i], "--target-list"))
@@ -605,13 +603,7 @@ int _tmain(int argc, _TCHAR* argv[])
             printf("ERROR: Unknown option %s\n", argv[i]);
             return -1;
         }
-    }
-
-    if (use_custom_target && custom_target.addr == 0)
-    {
-        printf("ERROR: --target-addr needs to be specified\n");
-        return -1;
-    }
+    }    
 
     if (use_smram_dump && data_file == NULL)
     {
@@ -696,12 +688,12 @@ int _tmain(int argc, _TCHAR* argv[])
                     }
 
                     // run exploitation
-                    ret = exploit(&context, target, use_custom_target ? &custom_target : NULL, data_file);
+                    ret = exploit(&context, target, &custom_target, data_file);
                 }
                 else
                 {
                     printf("ERROR: Unable to determinate SMRAM address\n");
-                }                
+                }
             }
             else
             {

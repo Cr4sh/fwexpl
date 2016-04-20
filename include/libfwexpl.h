@@ -50,6 +50,12 @@ void uefi_expl_uninit(void);
 bool uefi_expl_is_initialized(void);
 
 
+// read virtual memory at given address
+bool uefi_expl_virt_mem_read(unsigned long long address, int size, unsigned char *buff);
+
+// write virtual memory at given address
+bool uefi_expl_virt_mem_write(unsigned long long address, int size, unsigned char *buff);
+
 // read physical memory at given address
 bool uefi_expl_phys_mem_read(unsigned long long address, int size, unsigned char *buff);
 
