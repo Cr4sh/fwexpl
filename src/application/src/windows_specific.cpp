@@ -49,7 +49,12 @@ unsigned long long win_get_efi_boot_services(void)
                     lpszHalName = lpszName;
                     break;
                 }
-            }            
+            }       
+
+            if (lpszHalName)
+            {
+                break;
+            }
         }
         
         if (HalAddr && lpszHalName)
@@ -197,80 +202,42 @@ unsigned long long win_get_efi_boot_services(void)
                             (unsigned long long)EfiRuntimeImageAddr, 
                             dwEfiRuntimeImageSize, Image))
                         {
-                            PUCHAR Code = NULL;
-                            DWORD dwCodeSize = 0;
-
                             PIMAGE_NT_HEADERS pHeaders = (PIMAGE_NT_HEADERS)
-                                RVATOVA(hModule, ((PIMAGE_DOS_HEADER)hModule)->e_lfanew);
+                                RVATOVA(Image, ((PIMAGE_DOS_HEADER)Image)->e_lfanew);
 
-                            PIMAGE_SECTION_HEADER pSection = (PIMAGE_SECTION_HEADER)
-                                RVATOVA(&pHeaders->OptionalHeader, pHeaders->FileHeader.SizeOfOptionalHeader);
-
-                            // enumerate image sections        
-                            for (DWORD i = 0; i < pHeaders->FileHeader.NumberOfSections; i += 1)
+                            for (DWORD i = 0; i < 0x100; i += 1)
                             {
-                                char *lpszName = (char *)&pSection->Name;
-                                
-                                // find code section
-                                if (!strncmp(lpszName, ".text", 5))
+                                PUCHAR Ptr = RVATOVA(Image, pHeaders->OptionalHeader.AddressOfEntryPoint + i);
+
+                                /*
+                                    Check for the following code at entry point of EFI driver:
+
+                                        mov     rax, cs:qword_AA8DCE98      ; get EFI_BOOT_SERVICES address
+                                        call    qword ptr [rax+140h]        ; call LocateProtocol function
+                                */
+                                if (*(Ptr + 0x00) == 0x48 && *(Ptr + 0x01) == 0x8b && *(Ptr + 0x02) == 0x05 &&
+                                    *(Ptr + 0x07) == 0xff && *(Ptr + 0x08) == 0x90 && *(PDWORD)(Ptr + 0x09) == 0x140)
                                 {
-                                    Code = RVATOVA(Image, pSection->VirtualAddress);
-                                    dwCodeSize = pSection->SizeOfRawData;
+                                    // get address of variable that points to EFI_BOOT_SERVICES
+                                    PVOID *pEfiBootServices = (PVOID *)(Ptr + *(PLONG)(Ptr + 3) + 7);                                                                                
+
+                                    if (IS_EFI_DXE_ADDR(*pEfiBootServices))
+                                    {                                            
+                                        DbgMsg(
+                                            __FILE__, __LINE__,
+                                            "EFI_BOOT_SERVICES address is "IFMT"\n", *pEfiBootServices
+                                        );
+
+                                        Ret = (unsigned long long)*pEfiBootServices;
+                                    }
+                                        
                                     break;
                                 }
-
-                                pSection += 1;
                             }
 
-                            if (Code && dwCodeSize > 0)
+                            if (Ret == 0)
                             {
-                                for (DWORD i = 0; i < dwCodeSize; i += 1)
-                                {
-                                    PUCHAR Ptr = RVATOVA(Code, i);
-
-                                    /*
-                                        Check for the following code:
-
-                                            mov     cs:qword_AA8DCEA8, rdx      ; EFI_SYSTEM_TABLE
-                                            mov     r9, [rdx+60h]
-                                            mov     rbx, r8
-                                            mov     cs:qword_AA8DCE98, r9       ; EFI_BOOT_SERVICES
-                                            mov     rax, [rdx+58h]
-                                            mov     rdi, rcx
-                                            lea     r8, qword_AA8DCEB8
-                                            lea     rcx, qword_AA8DB810
-                                            xor     edx, edx
-                                            mov     cs:qword_AA8DCEA0, rax      ; EFI_RUNTIME_SERVICES
-                                    */
-                                    if (*(Ptr + 0x00) == 0x48 && *(Ptr + 0x01) == 0x89 && *(Ptr + 0x02) == 0x15 &&
-                                        *(Ptr + 0x07) == 0x4c && *(Ptr + 0x08) == 0x8b && *(Ptr + 0x09) == 0x4a && *(Ptr + 0x0a) == 0x60 && 
-                                        *(Ptr + 0x0e) == 0x4c && *(Ptr + 0x0f) == 0x89 && *(Ptr + 0x10) == 0x0d)
-                                    {
-                                        // get address of variable that points to EFI_BOOT_SERVICES
-                                        PVOID *pEfiBootServices = (PVOID *)(Ptr + 0x0e + *(PLONG)(Ptr + 0x11) + 0x07);                                                                                
-
-                                        if (IS_EFI_DXE_ADDR(*pEfiBootServices))
-                                        {                                            
-                                            DbgMsg(
-                                                __FILE__, __LINE__,
-                                                "EFI_BOOT_SERVICES address is "IFMT"\n", *pEfiBootServices
-                                            );
-
-                                            Ret = (unsigned long long)*pEfiBootServices;
-                                        }
-                                        
-                                        break;
-                                    }
-                                }
-
-                                if (Ret == 0)
-                                {
-                                    DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Unable to locate EFI_BOOT_SERVICES\n");
-                                }
-                            }
-                            else
-                            {
-                                DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Unable to locate code section\n");
+                                DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Unable to locate EFI_BOOT_SERVICES\n");
                             }                                                       
                         }
 
