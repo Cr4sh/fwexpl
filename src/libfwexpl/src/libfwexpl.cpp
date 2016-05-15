@@ -28,8 +28,10 @@
         _name_->Code = (_code_);                                    \
     }
 
+bool uefi_expl_pci_read_ex(unsigned int address, data_width size, unsigned long long *val);
+bool uefi_expl_pci_write_ex(unsigned int address, data_width size, unsigned long long val);
 
-static HANDLE m_hDevice = NULL; 
+HANDLE m_hDevice = NULL; 
 static BOOL m_bStopService = FALSE;
 //--------------------------------------------------------------------------------------
 BOOL uefi_drv_device_request(HANDLE hDevice, PREQUEST_BUFFER Request, DWORD dwRequestSize)
@@ -41,6 +43,12 @@ BOOL uefi_drv_device_request(HANDLE hDevice, PREQUEST_BUFFER Request, DWORD dwRe
     DbgMsg(__FILE__, __LINE__, __FUNCTION__"(): Code = 0x%.2x\n", Request->Code);
 
 #endif
+
+    if (m_hDevice == NULL)
+    {
+        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
+        return FALSE;
+    }
 
     PREQUEST_BUFFER Response = (PREQUEST_BUFFER)M_ALLOC(dwRequestSize);
     if (Response)
@@ -204,13 +212,7 @@ void uefi_expl_uninit(void)
 }
 //--------------------------------------------------------------------------------------
 bool uefi_expl_is_initialized(void)
-{
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
+{    
     // allocate driver request buffer
     DRV_REQUEST_INIT(Request, DRV_CTL_NONE);
 
@@ -236,16 +238,49 @@ static DWORD uefi_expl_data_size(data_width width)
     return 0;
 }
 //--------------------------------------------------------------------------------------
+bool uefi_expl_pci_read(unsigned int address, data_width size, unsigned long long *val)
+{
+    if (size == U64)
+    {
+        unsigned long long v_hi = 0, v_lo = 0;
+
+        if (uefi_expl_pci_read_ex(address + 0, U32, &v_lo) &&
+            uefi_expl_pci_read_ex(address + 4, U32, &v_hi))
+        {
+            *val = (v_hi << 32) | (v_lo & 0xffffffff);
+            return true;
+        }
+
+        return false;
+    }
+
+    return uefi_expl_pci_read_ex(address, size, val);
+}
+//--------------------------------------------------------------------------------------
+bool uefi_expl_pci_write(unsigned int address, data_width size, unsigned long long val)
+{
+    if (size == U64)
+    {
+        unsigned long long v_hi = val << 32, v_lo = val & 0xffffffff;
+
+        if (uefi_expl_pci_write_ex(address + 0, U32, v_lo) &&
+            uefi_expl_pci_write_ex(address + 4, U32, v_hi))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    return uefi_expl_pci_write_ex(address, size, val);
+}
+//--------------------------------------------------------------------------------------
+#ifndef USE_RWDRV
+//--------------------------------------------------------------------------------------
 bool uefi_expl_virt_mem_read(unsigned long long address, int size, unsigned char *buff)
 {
     bool bRet = false;
     DWORD dwRequestSize = sizeof(REQUEST_BUFFER) + size;
-
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
 
     // allocate driver request buffer
     DRV_REQUEST_INIT_EX(pRequest, DRV_CTL_VIRT_MEM_READ, dwRequestSize);
@@ -278,12 +313,6 @@ bool uefi_expl_virt_mem_write(unsigned long long address, int size, unsigned cha
     bool bRet = false;
     DWORD dwRequestSize = sizeof(REQUEST_BUFFER) + size;
 
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT_EX(pRequest, DRV_CTL_VIRT_MEM_WRITE, dwRequestSize);
 
@@ -314,12 +343,6 @@ bool uefi_expl_phys_mem_read(unsigned long long address, int size, unsigned char
 {
     bool bRet = false;
     DWORD dwRequestSize = sizeof(REQUEST_BUFFER) + size;
-
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
 
     // allocate driver request buffer
     DRV_REQUEST_INIT_EX(pRequest, DRV_CTL_PHYS_MEM_READ, dwRequestSize);
@@ -352,12 +375,6 @@ bool uefi_expl_phys_mem_write(unsigned long long address, int size, unsigned cha
     bool bRet = false;
     DWORD dwRequestSize = sizeof(REQUEST_BUFFER) + size;
 
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT_EX(pRequest, DRV_CTL_PHYS_MEM_WRITE, dwRequestSize);
 
@@ -386,12 +403,6 @@ bool uefi_expl_phys_mem_write(unsigned long long address, int size, unsigned cha
 //--------------------------------------------------------------------------------------
 bool uefi_expl_port_read(unsigned short port, data_width size, unsigned long long *val)
 {
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT(Request, DRV_CTL_PORT_READ);
 
@@ -413,12 +424,6 @@ bool uefi_expl_port_read(unsigned short port, data_width size, unsigned long lon
 //--------------------------------------------------------------------------------------
 bool uefi_expl_port_write(unsigned short port, data_width size, unsigned long long val)
 {
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT(Request, DRV_CTL_PORT_WRITE);
 
@@ -429,14 +434,8 @@ bool uefi_expl_port_write(unsigned short port, data_width size, unsigned long lo
     return uefi_drv_device_request(m_hDevice, &Request, sizeof(Request)) ? true : false;
 }
 //--------------------------------------------------------------------------------------
-bool uefi_expl_pci_read(unsigned int address, data_width size, unsigned long long *val)
+bool uefi_expl_pci_read_ex(unsigned int address, data_width size, unsigned long long *val)
 {
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT(Request, DRV_CTL_PCI_READ);
 
@@ -456,14 +455,8 @@ bool uefi_expl_pci_read(unsigned int address, data_width size, unsigned long lon
     return false;
 }
 //--------------------------------------------------------------------------------------
-bool uefi_expl_pci_write(unsigned int address, data_width size, unsigned long long val)
+bool uefi_expl_pci_write_ex(unsigned int address, data_width size, unsigned long long val)
 {
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT(Request, DRV_CTL_PCI_WRITE);
 
@@ -476,12 +469,6 @@ bool uefi_expl_pci_write(unsigned int address, data_width size, unsigned long lo
 //--------------------------------------------------------------------------------------
 bool uefi_expl_smi_invoke(unsigned char code)
 {
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT(Request, DRV_CTL_SMI_INVOKE);
 
@@ -492,12 +479,6 @@ bool uefi_expl_smi_invoke(unsigned char code)
 //--------------------------------------------------------------------------------------
 bool uefi_expl_mem_alloc(int size, unsigned long long *addr, unsigned long long *phys_addr)
 {
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT(Request, DRV_CTL_MEM_ALLOC);
 
@@ -521,14 +502,8 @@ bool uefi_expl_mem_alloc(int size, unsigned long long *addr, unsigned long long 
     return false;
 }
 //--------------------------------------------------------------------------------------
-bool uefi_expl_mem_free(unsigned long long addr)
+bool uefi_expl_mem_free(unsigned long long addr, int size)
 {
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT(Request, DRV_CTL_MEM_FREE);
 
@@ -539,12 +514,6 @@ bool uefi_expl_mem_free(unsigned long long addr)
 //--------------------------------------------------------------------------------------
 bool uefi_expl_phys_addr(unsigned long long addr, unsigned long long *phys_addr)
 {
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT(Request, DRV_CTL_PHYS_ADDR);
 
@@ -565,12 +534,6 @@ bool uefi_expl_phys_addr(unsigned long long addr, unsigned long long *phys_addr)
 //--------------------------------------------------------------------------------------
 bool uefi_expl_msr_get(unsigned int reg, unsigned long long *val)
 {
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT(Request, DRV_CTL_MSR_GET);
 
@@ -591,12 +554,6 @@ bool uefi_expl_msr_get(unsigned int reg, unsigned long long *val)
 //--------------------------------------------------------------------------------------
 bool uefi_expl_msr_set(unsigned int reg, unsigned long long val)
 {
-    if (m_hDevice == NULL)
-    {
-        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Not initialized\n");
-        return false;
-    }
-
     // allocate driver request buffer
     DRV_REQUEST_INIT(Request, DRV_CTL_MSR_SET);
 
@@ -605,5 +562,7 @@ bool uefi_expl_msr_set(unsigned int reg, unsigned long long val)
 
     return uefi_drv_device_request(m_hDevice, &Request, sizeof(Request)) ? true : false;
 }
+//--------------------------------------------------------------------------------------
+#endif // USE_RWDRV
 //--------------------------------------------------------------------------------------
 // EoF

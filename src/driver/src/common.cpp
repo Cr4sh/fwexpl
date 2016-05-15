@@ -269,7 +269,7 @@ PVOID KernelGetModuleBase(char *ModuleName)
     return pModuleBase;
 }
 //--------------------------------------------------------------------------------------
-ULONG KernelGetExportAddress(PVOID Image, char *lpszFunctionName)
+PVOID KernelGetExportAddress(PVOID Image, char *lpszFunctionName)
 {
     __try
     {
@@ -319,7 +319,7 @@ ULONG KernelGetExportAddress(PVOID Image, char *lpszFunctionName)
             {
                 if (!strcmp((char *)RVATOVA(Image, AddressOfNames[i]), lpszFunctionName))
                 {
-                    return AddressOfFunctions[AddrOfOrdinals[i]];
+                    return RVATOVA(Image, AddressOfFunctions[AddrOfOrdinals[i]]);
                 }
             }
         }
@@ -1050,10 +1050,10 @@ ULONG GetSyscallNumber(char *lpszName)
     if (NtdllBase)
     {
         // get function addres by name hash
-        ULONG FuncRva = KernelGetExportAddress(NtdllBase, lpszName);
-        if (FuncRva)
+        PUCHAR Func = (PUCHAR)KernelGetExportAddress(NtdllBase, lpszName);
+        if (Func)
         {
-            PUCHAR Func = (PUCHAR)NtdllBase + FuncRva;
+
 #ifdef _X86_
             // check for mov eax,imm32
             if (*Func == 0xB8)

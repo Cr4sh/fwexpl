@@ -1,6 +1,9 @@
 libdsebypass.obj: src/libdsebypass.cpp
     $(CC) $(CFLAGS) src/libdsebypass.cpp
 
+shellcode.obj: src/shellcode.cpp
+    $(CC) $(CFLAGS) src/shellcode.cpp
+
 SNCC0_Sys_220010.obj: src/SNCC0_Sys_220010.cpp
     $(CC) $(CFLAGS) src/SNCC0_Sys_220010.cpp
 
@@ -24,4 +27,4 @@ service_inf.obj: ../common/service_inf.cpp
 
 LLIBS = kernel32.lib user32.lib advapi32.lib shlwapi.lib version.lib
 
-LOBJS = libdsebypass.obj SNCC0_Sys_220010.obj debug.obj common.obj common_expl.obj loader.obj service.obj service_inf.obj
+LOBJS = libdsebypass.obj shellcode.obj SNCC0_Sys_220010.obj debug.obj common.obj common_expl.obj loader.obj service.obj service_inf.obj

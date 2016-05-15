@@ -44,7 +44,7 @@
 
 BOOLEAN SetObjectSecurityWorld(HANDLE hObject, ACCESS_MASK AccessMask);
 PVOID KernelGetModuleBase(char *ModuleName);
-ULONG KernelGetExportAddress(PVOID Image, char *lpszFunctionName);
+PVOID KernelGetExportAddress(PVOID Image, char *lpszFunctionName);
 POBJECT_NAME_INFORMATION GetObjectName(PVOID pObject);
 POBJECT_NAME_INFORMATION GetObjectNameByHandle(HANDLE hObject);
 POBJECT_NAME_INFORMATION GetFullNtPath(PUNICODE_STRING Name);

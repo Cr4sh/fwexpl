@@ -8,12 +8,19 @@ CFLAGS = /nologo -I".\src" -I"$(SDK_INC_PATH)" -I"$(CRT_INC_PATH)" -DDBG -D_AMD6
 
 include makefile.inc
 
+AM = ml64.exe
+
+AMFLAGS = /nologo /c
+
+common_asm.obj: src/asm/amd64/common_asm.asm
+    $(AM) $(AMFLAGS) src/asm/amd64/common_asm.asm
+
 LN = link.exe
 
 LFLAGS = /LIBPATH:$(SDK_LIB_PATH)\..\amd64 /LIBPATH:$(CRT_LIB_PATH)\..\amd64 /OPT:REF /OPT:ICF /INCREMENTAL:NO /DEBUG /SUBSYSTEM:CONSOLE /OUT:..\..\bin\$(OUTNAME).exe /ORDER:@func_order.txt
 
-$(OUTNAME).exe: $(LOBJS)
-    $(LN) $(LFLAGS) $(LOBJS) $(LLIBS) ..\..\lib\libfwexpl_amd64.lib
+$(OUTNAME).exe: $(LOBJS) common_asm.obj
+    $(LN) $(LFLAGS) $(LOBJS) common_asm.obj $(LLIBS) ..\..\lib\libfwexpl_amd64.lib
 
 clean:
     @del *.obj 

@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 //--------------------------------------------------------------------------------------
-void hexdump(unsigned char *data, unsigned int data_size)
+void hexdump(unsigned char *data, unsigned int data_size, unsigned long long addr)
 {
     unsigned int dp = 0, p = 0;
     const char trans[] =
@@ -35,7 +35,7 @@ void hexdump(unsigned char *data, unsigned int data_size)
                 strcat(buff, temp);
             }
 
-            printf("%.8x: %s\r\n", dp - 16, buff);
+            printf("%.8llx: %s\n", addr + dp - 16, buff);
             memset(buff, 0, sizeof(buff));
         }
     }
@@ -62,7 +62,7 @@ void hexdump(unsigned char *data, unsigned int data_size)
             strcat(buff, temp);
         }
 
-        printf("%.8x: %s\r\n", data_size - (data_size % 16), buff);
+        printf("%.8llx: %s\n", addr + data_size - (data_size % 16), buff);
     }
 }
 //--------------------------------------------------------------------------------------

@@ -14,6 +14,7 @@
 #include "../../common/ntdll_defs.h"
 #include "../../common/ntdll_undocnt.h"
 #include "../../common/common.h"
+#include "../../common/memory.h"
 #include "../../common/service.h"
 #include "../../common/debug.h"
 

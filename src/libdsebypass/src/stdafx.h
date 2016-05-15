@@ -21,4 +21,5 @@
 
 #include "../../../include/libdsebypass.h"
 
+#include "shellcode.h"
 #include "SNCC0_Sys_220010.h"

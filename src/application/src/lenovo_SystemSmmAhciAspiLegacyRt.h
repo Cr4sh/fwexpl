@@ -23,5 +23,10 @@ typedef struct _UEFI_EXPL_TARGET
 } UEFI_EXPL_TARGET,
 *PUEFI_EXPL_TARGET;
 
-bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_target, UEFI_EXPL_SMM_HANDLER handler, void *context);
+bool expl_lenovo_SystemSmmAhciAspiLegacyRt(
+    int target, PUEFI_EXPL_TARGET custom_target,
+    UEFI_EXPL_SMM_HANDLER handler, void *context,
+    bool quiet
+)
+;
 void expl_lenovo_SystemSmmAhciAspiLegacyRt_targets_info(void);

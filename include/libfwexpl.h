@@ -28,6 +28,9 @@ typedef struct _UEFI_EXPL_SMM_SHELLCODE_CONTEXT
     unsigned long long user_handler;
     unsigned long long user_context;
 
+    unsigned long long ptr_addr;
+    unsigned long long ptr_val;
+
 } UEFI_EXPL_SMM_SHELLCODE_CONTEXT,
 *PUEFI_EXPL_SMM_SHELLCODE_CONTEXT;
 
@@ -85,7 +88,7 @@ bool uefi_expl_smi_invoke(unsigned char code);
 bool uefi_expl_mem_alloc(int size, unsigned long long *addr, unsigned long long *phys_addr);
 
 // free memory that was allocated with uefi_expl_mem_alloc()
-bool uefi_expl_mem_free(unsigned long long addr);
+bool uefi_expl_mem_free(unsigned long long addr, int size);
 
 // convert virtual address to physical memory address
 bool uefi_expl_phys_addr(unsigned long long addr, unsigned long long *phys_addr);

@@ -1,4 +1,5 @@
 
+#define PAGE_SHIFT 12
 #define PAGE_SIZE 0x1000
 
 #define RVATOVA(_base_, _offset_) ((PUCHAR)(_base_) + (ULONG)(_offset_))

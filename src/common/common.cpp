@@ -32,8 +32,11 @@ BOOL LoadPrivileges(char *lpszName)
     bRet = TRUE;
 
 end:
+
     if (hToken)
+    {
         CloseHandle(hToken);
+    }
 
     return bRet;
 }

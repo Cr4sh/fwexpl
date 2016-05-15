@@ -1,8 +1,12 @@
 #include "stdafx.h"
 
+typedef PPHYSICAL_MEMORY_RANGE (NTAPI * func_MmGetPhysicalMemoryRanges)(void);
+
 PVOID m_Driver = NULL;
 PDEVICE_OBJECT m_DeviceObject = NULL;
 UNICODE_STRING m_usDosDeviceName, m_usDeviceName;
+
+func_MmGetPhysicalMemoryRanges f_MmGetPhysicalMemoryRanges = NULL;
 //--------------------------------------------------------------------------------------
 NTSTATUS DriverDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
@@ -100,6 +104,51 @@ NTSTATUS DriverDispatch(PDEVICE_OBJECT DeviceObject, PIRP Irp)
                                     Buff->MemWrite.Size,
                                     Buff->MemWrite.Data
                                 );
+                            }
+
+                            break;
+                        }
+
+                    case DRV_CTL_PHYS_MEM_MAP:
+                        {
+                            PPHYS_MEM_REGION MemRegion = Buff->MemMap.Regions;
+
+                            Buff->MemMap.RegionsCount = 0;
+
+                            if (f_MmGetPhysicalMemoryRanges)
+                            {
+                                // get physical memory information
+                                PPHYSICAL_MEMORY_RANGE MemInfo = f_MmGetPhysicalMemoryRanges();
+                                if (MemInfo)
+                                {
+                                    NTSTATUS Status = STATUS_SUCCESS;
+
+                                    while (MemInfo->BaseAddress.QuadPart != 0 || MemInfo->NumberOfBytes.QuadPart != 0)
+                                    {
+                                        if (InSize >= sizeof(REQUEST_BUFFER) + sizeof(PHYS_MEM_REGION) * (Buff->MemMap.RegionsCount + 1))
+                                        {
+                                            // copy region information to IOCTL request buffer
+                                            Buff->MemMap.Regions[Buff->MemMap.RegionsCount].Address = MemInfo->BaseAddress.QuadPart;
+                                            Buff->MemMap.Regions[Buff->MemMap.RegionsCount].Size = MemInfo->NumberOfBytes.QuadPart;
+
+                                            Buff->MemMap.RegionsCount += 1;
+                                        }
+                                        else
+                                        {
+                                            Status = STATUS_UNSUCCESSFUL;
+                                            break;
+                                        }
+
+                                        MemInfo += 1;
+                                        MemRegion += 1;                                        
+                                    }
+
+                                    ns = Status;
+                                }
+                                else
+                                {
+                                    DbgMsg(__FILE__, __LINE__, "ERROR: MmGetPhysicalMemoryRange() fails\n");
+                                }
                             }
 
                             break;
@@ -322,6 +371,19 @@ NTSTATUS DriverEntry(
     }
 
     DbgMsg(__FILE__, __LINE__, __FUNCTION__"(): Driver loaded\n");    
+
+    PVOID KernelBase = KernelGetModuleBase("ntoskrnl.exe");
+    if (KernelBase)
+    {
+        if (f_MmGetPhysicalMemoryRanges = (func_MmGetPhysicalMemoryRanges)
+            KernelGetExportAddress(KernelBase, "MmGetPhysicalMemoryRanges"))
+        {
+            DbgMsg(
+                __FILE__, __LINE__, "nt!MmGetPhysicalMemoryRanges() is at "IFMT"\n", 
+                f_MmGetPhysicalMemoryRanges
+            );
+        }
+    }
 
     RtlInitUnicodeString(&m_usDeviceName, L"\\Device\\" DEVICE_NAME);
     RtlInitUnicodeString(&m_usDosDeviceName, L"\\DosDevices\\" DEVICE_NAME);    

