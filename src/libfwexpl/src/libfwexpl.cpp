@@ -147,11 +147,10 @@ bool uefi_expl_init(char *driver_path, bool use_dse_bypass)
         GetSystemDirectory(szDestPath, sizeof(szDestPath));
         lstrcat(szDestPath, "\\drivers\\" DRIVER_FILE_NAME);
 
-        if (ReadFromFile(driver_path, &Data, &dwDataSize))
-        {            
-            // copy driver to the system directory
-            DumpToFile(szDestPath, Data, dwDataSize);
-            M_FREE(Data);
+        // copy driver to the system directory
+        if (!CopyFile(driver_path, szDestPath, FALSE))
+        {                        
+            DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: Can't copy %s to system32\\drivers\n", driver_path);
         }
 
         // start service

