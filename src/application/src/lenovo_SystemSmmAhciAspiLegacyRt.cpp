@@ -363,6 +363,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(
 
                         if (expl_target->smi_num != -1 || ret)
                         {
+                            expl_target->smi_num = smi_num;
                             break;
                         }
 
