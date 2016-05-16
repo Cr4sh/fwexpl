@@ -52,7 +52,7 @@ typedef void (* SMM_PROC)(void);
 #ifdef USE_RWDRV
 
 // RWEverything driver can allocate only relatively small chunks of contiguous physical memory
-#define MEM_IO_BUFF_LEN (PAGE_SIZE * 10)
+#define MEM_IO_BUFF_LEN (PAGE_SIZE * 4)
 
 #else
 
