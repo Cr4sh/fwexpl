@@ -47,7 +47,9 @@ To run System Management Mode exploit from command line you can use bin/fwexpl_a
 
   --target-smi - Use manual SMI handler number for SystemSmmAhciAspiLegacyRt exploit. This option will be ignored if --target was specified. If --target-addr was specified without --target-smi — SystemSmmAhciAspiLegacyRt exploit will check all of the possible SMI handlers from 0 to 255.
 
-  --smram-dump — Determinate current SMRAM address and dump it contents to file.
+  --smram-dump — Determinate current SMRAM address and dump it's contents to file specified by --file option.
+
+  --phys-mem-dump — Full raw physical memory dump into the file specified by --file option.
   
   --phys-mem-read <addr> — Read physical memory starting from specified address.
   
@@ -63,9 +65,22 @@ To run System Management Mode exploit from command line you can use bin/fwexpl_a
 
   --test — Run some basic libfwexpl tests.
 
-Please note, that --dse-bypass option requires sncc0.sys file (digitally signed vulnerable driver from Secret Net) in the same directory with fwexpl_app_amd64.exe, this file can be downloaded here: 
+
+==============================
+
+NOTE:
+
+By default, curent version of the program doesn't need it's own kernel mode driver that located in src/driver because it uses digitally signed driver from RWEverything (http://rweverything.com/) to implement libfwexpl API on the top of it.
+
+If you want to use unsigned driver and DSE bypass exploit for Secret Net please remove USE_RWDRV from config.h and rebuild the project from the source code. If USE_RWDRV is enabled -- be sure that RwDrv.sys is located in the same directory with fwexpl_app_amd64.exe, this file can be downloaded here: 
+
+https://mega.nz/#!CNNA0SoC!Z2Xi2icwX4d4jzW016dKnKGhVglWmSSPpgiRU7VCG6g
+
+Also, --dse-bypass option requires sncc0.sys file (digitally signed vulnerable driver from Secret Net) in the same directory with fwexpl_app_amd64.exe, this file can be downloaded here: 
 
 https://mega.nz/#!ydEnSabK!H63Yw44POR0dO02WAh-f1eqgHaWeeqlqP75_XwIzw_4
+
+==============================
 
 
 Usage examples:
@@ -128,6 +143,8 @@ Reading and writing memory:
   > fwexpl_app_amd64.exe --target 1 --phys-mem-read 0x86000000 --size 0x1000 — Read 4096 bytes of physical memory starting from 0x86000000 and print it's hexadecimal dump to stdout.
 
   > fwexpl_app_amd64.exe --target 1 --phys-mem-write 0x86000000 --file mem.bin — Read data stored in mem.bin file and copy it to physical memory starting from 0x86000000.
+
+  > fwexpl_app_amd64.exe --target 1 --phys-mem-dump --file physmem.bin — Perform raw physical memory dump using SMM vulnerability.
 
 
 To compile a whole project from the source code:

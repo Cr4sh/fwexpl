@@ -139,15 +139,19 @@ bool uefi_expl_init(char *driver_path, bool use_dse_bypass)
 
 #endif // USE_DSE_BYPASS
 
-    {
+    {        
         char szDestPath[MAX_PATH];
+        PVOID Data = NULL;
+        DWORD dwDataSize = 0;        
+
         GetSystemDirectory(szDestPath, sizeof(szDestPath));
         lstrcat(szDestPath, "\\drivers\\" DRIVER_FILE_NAME);
 
-        // copy driver to the system directory
-        if (!CopyFile(driver_path, szDestPath, FALSE))
-        {
-            DbgMsg(__FILE__, __LINE__, "CopyFile() ERROR %d\n", GetLastError());
+        if (ReadFromFile(driver_path, &Data, &dwDataSize))
+        {            
+            // copy driver to the system directory
+            DumpToFile(szDestPath, Data, dwDataSize);
+            M_FREE(Data);
         }
 
         // start service

