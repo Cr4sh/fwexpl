@@ -55,6 +55,10 @@ To run System Management Mode exploit from command line you can use bin/fwexpl_a
   
   --phys-mem-write <addr> — Write physical memory starting from specified address.
   
+  --ept-find — Find currently running VMX guests and determinate their values of EPT PML4.
+
+  --ept-dump <addr> — Print guest physical address to host physical address mappings for EPT at given address. If --file option was not specified information will be printed into the stdout.
+
   --length <bytes> — Number of bytes to read or write for --phys-mem-read and --phys-mem-write.  
   
   --file <path> — Memory dump path to read or write, in case of --phys-mem-read this parameter is optional and when it's not specified — application will print a hex dump of physical memory to stdout. In case of --smram-dump this parameter is mandatory.

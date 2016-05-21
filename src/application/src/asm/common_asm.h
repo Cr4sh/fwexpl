@@ -11,6 +11,8 @@ ULONG_PTR NTAPI _cr3_get(VOID);
 
 VOID NTAPI _cr3_set(ULONG_PTR Val);
 
+ULONG_PTR NTAPI _vmread(ULONG_PTR Code);
+
 #ifdef __cplusplus
 
 }

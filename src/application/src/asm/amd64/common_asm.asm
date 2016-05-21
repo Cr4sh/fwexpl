@@ -3,6 +3,7 @@
 public _invlpg
 public _cr3_get
 public _cr3_set
+public _vmread
 
 _SMM SEGMENT EXECUTE READ 'CODE'
 
@@ -27,7 +28,13 @@ _cr3_set PROC
 
 _cr3_set ENDP
 
-_SMM ENDS
+_vmread PROC
 
+    vmread  rax, rcx    
+    ret
+
+_vmread ENDP
+
+_SMM ENDS
 
 end
