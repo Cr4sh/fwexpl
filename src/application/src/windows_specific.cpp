@@ -263,4 +263,80 @@ unsigned long long win_get_efi_boot_services(void)
     return Ret;
 }
 //--------------------------------------------------------------------------------------
+DWORD WINAPI s3_sleep_thread(LPVOID lpParam)
+{
+    Sleep(300);
+
+    // put computer into the sleep
+    SetSuspendState(FALSE, TRUE, FALSE);
+    
+    return 0;
+}
+
+int s3_sleep_with_timeout(int seconds)
+{
+    int ret = -1;
+    SYSTEM_POWER_CAPABILITIES PowerCapabilities;
+
+    if (!GetPwrCapabilities(&PowerCapabilities))
+    {
+        DbgMsg(__FILE__, __LINE__, "GetPwrCapabilities() ERROR %d\n", GetLastError());
+        return -1;
+    }
+
+    if (!PowerCapabilities.SystemS3)
+    {
+        DbgMsg(__FILE__, __LINE__, __FUNCTION__"() ERROR: S3 sleep is not supoprted on this system\n");
+        return -1;
+    }
+
+    // create waitable timer to wake up computer from sleep
+    HANDLE hTimer = CreateWaitableTimer(NULL, TRUE, NULL);
+    if (hTimer)
+    {        
+        char szMessage[0x100];
+
+        sprintf(
+            szMessage, 
+            "System is going to S3 sleep for %d seconds.\n"
+            "Press the power button if it will not wake up atomatically.\n", seconds);
+
+        MessageBox(0, szMessage, "Warning", MB_ICONWARNING);
+
+        LARGE_INTEGER Time;
+        Time.QuadPart = seconds * -1 * 1000 * 1000 * 10;
+
+        if (SetWaitableTimer(hTimer, &Time, 0, NULL, NULL, TRUE))
+        {
+            HANDLE hThread = CreateThread(NULL, 0, s3_sleep_thread, NULL, 0, NULL);
+            if (hThread)
+            {
+                HANDLE Events[] = { hTimer, hThread };
+
+                // wait till wakeup
+                WaitForMultipleObjects(2, Events, FALSE, INFINITE);                
+                CloseHandle(hThread);
+
+                ret = 0;
+            }
+            else
+            {
+                DbgMsg(__FILE__, __LINE__, "CreateThread() ERROR %d\n", GetLastError());
+            }
+        }       
+        else
+        {
+            DbgMsg(__FILE__, __LINE__, "SetWaitableTimer() ERROR %d\n", GetLastError());
+        }
+
+        CloseHandle(hTimer);
+    }
+    else
+    {
+        DbgMsg(__FILE__, __LINE__, "CreateWaitableTimer() ERROR %d\n", GetLastError());
+    }
+        
+    return ret;
+}
+//--------------------------------------------------------------------------------------
 // EoF

@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 
 #include <windows.h>
+#include <PowrProf.h>
 #include <Shlwapi.h>
 
 #include "../../common/TlHelp32.h"

