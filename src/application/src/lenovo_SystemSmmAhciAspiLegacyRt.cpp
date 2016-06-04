@@ -63,6 +63,8 @@
 */
 static UEFI_EXPL_TARGET g_targets[] =
 {
+    { 0x3b08a3b0, 0x07, "Lenovo ThinkPad X220 firmware 1.40" },
+
     { 0xd12493b0, 0x01, "Lenovo ThinkPad X230 firmware 2.61"  },
 
     { 0xa11a6750, 0x03, "Lenovo ThinkPad T450s firmware 1.11" }
