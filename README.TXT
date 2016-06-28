@@ -61,6 +61,10 @@ To run System Management Mode exploit from command line you can use bin/fwexpl_a
 
   --disable-pr — Use SMM exploit to disable SPI Protected Ranges flash write protection.
 
+  --dump-bs — Dump UEFI Boot Script Table stored in SMM LockBox.
+
+  --s3-resume <seconds> — Trigger S3 susped-resume cycle with specified delay.
+
   --length <bytes> — Number of bytes to read or write for --phys-mem-read and --phys-mem-write.  
   
   --file <path> — Memory dump path to read or write, in case of --phys-mem-read this parameter is optional and when it's not specified — application will print a hex dump of physical memory to stdout. In case of --smram-dump this parameter is mandatory.

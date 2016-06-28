@@ -1791,6 +1791,40 @@ int boot_script_table_addr(PUEFI_EXPL_TARGET target, unsigned long long *addr, u
     return 0;
 }
 //--------------------------------------------------------------------------------------
+void *boot_script_table_read(PUEFI_EXPL_TARGET target, unsigned long long *addr, unsigned int *size)
+{
+    unsigned long long bootscript_addr = 0;
+    unsigned int bootscript_size = 0;
+
+    // find UEFI boot script table address (points inside SMRAM) and size
+    if (boot_script_table_addr(target, &bootscript_addr, &bootscript_size) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: Unable to find UEFI boot script table\n");
+        return NULL;
+    }
+
+    // allocate bufer for boot script table entries
+    void *bootscript = malloc(bootscript_size);
+    if (bootscript == NULL)
+    {
+        return NULL;
+    }
+
+    // read boot script table entries
+    if (phys_mem_read(
+        target, (void *)bootscript_addr, bootscript_size, (unsigned char *)bootscript, NULL) != 0)
+    {
+        printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
+        free(bootscript);
+        return NULL;
+    }
+
+    *addr = bootscript_addr;
+    *size = bootscript_size;
+
+    return bootscript;
+}
+//--------------------------------------------------------------------------------------
 int pr_get(
     PUEFI_EXPL_TARGET target,
     unsigned int *pr0_val, unsigned int *pr1_val, 
@@ -1886,26 +1920,14 @@ int pr_disable(int target_, PUEFI_EXPL_TARGET target)
 
     printf("Root Complex Register Block is at 0x%llx\n", rcrb_addr);
 
-    // find UEFI boot script table address (points inside SMRAM) and size
-    if (boot_script_table_addr(target, &bootscript_addr, &bootscript_size) != 0)
-    {
-        printf(__FUNCTION__"() ERROR: Unable to find UEFI boot script table\n");
-        return -1;
-    }
-
-    // allocate bufer for boot script table entries
-    unsigned char *bootscript = (unsigned char *)malloc(bootscript_size);
+    // read boot script table
+    unsigned char *bootscript = (unsigned char *)boot_script_table_read(
+        target, &bootscript_addr, &bootscript_size
+    );
     if (bootscript == NULL)
     {
+        printf(__FUNCTION__"() ERROR: Unable to read boot script table\n");
         return -1;
-    }
-
-    // read boot script table entries
-    if (phys_mem_read(
-        target, (void *)bootscript_addr, bootscript_size, bootscript, NULL) != 0)
-    {
-        printf(__FUNCTION__"() ERROR: phys_mem_read() fails\n");
-        goto _end;
     }
 
     struct
@@ -2034,6 +2056,8 @@ int _tmain(int argc, _TCHAR* argv[])
     bool use_dse_bypass = false, use_test = false;
     bool use_smram_dump = false, use_mem_dump = false;
     bool use_ept_find = false, use_pr_disable = false;
+    bool use_bs_dump = false;
+    int use_s3_resume = -1;
     
     SMM_HANDLER_CONTEXT context;
     memset(&context, 0, sizeof(context));
@@ -2200,6 +2224,24 @@ int _tmain(int argc, _TCHAR* argv[])
             // dump SMRAM contents
             use_smram_dump = true;
         }
+        else if (!strcmp(argv[i], "--bs-dump"))
+        {
+            // dump UEFI Boot Script Table stored in SMM LockBox
+            use_bs_dump = true;
+        }
+        else if (!strcmp(argv[i], "--s3-resume") && i < argc - 1)
+        {
+            // trigger S3 suspend-resume cycle
+            use_s3_resume = (int)strtoul(argv[i + 1], NULL, 10);
+
+            if (errno != 0)
+            {
+                printf("ERROR: Invalid S3 sleep time specified\n");
+                return -1;
+            }
+
+            i += 1;
+        }
         else
         {
             printf("ERROR: Unknown option %s\n", argv[i]);
@@ -2245,6 +2287,12 @@ int _tmain(int argc, _TCHAR* argv[])
     if (mem_write && data_file == NULL)
     {
         printf("ERROR: --file is required for --phys-mem-write\n");
+        return -1;
+    }
+
+    if (use_bs_dump && data_file == NULL)
+    {
+        printf("ERROR: --file is required for --bs-dump\n");
         return -1;
     }
 
@@ -2352,6 +2400,59 @@ int _tmain(int argc, _TCHAR* argv[])
                     else
                     {
                         printf("ERROR: Unable to determinate SMRAM address\n");
+                    }
+                }
+                else if (use_bs_dump)
+                {
+                    unsigned long long bootscript_addr = 0;
+                    unsigned int bootscript_size = 0;
+
+                    // read boot script table
+                    void *bootscript = boot_script_table_read(&target, &bootscript_addr, &bootscript_size);
+                    if (bootscript)
+                    {
+                        // create output file
+                        FILE *f = fopen(data_file, "wb");
+                        if (f)
+                        {
+                            // write readed data to file
+                            if (fwrite(bootscript, 1, bootscript_size, f) == bootscript_size)
+                            {
+                                printf("%d bytes written into the %s\n", bootscript_size, data_file);
+
+                                ret = 0;
+                            }
+                            else
+                            {
+                                printf("ERROR: fwrite() fails\n");
+                            }
+
+                            fclose(f);
+                        }
+                        else
+                        {
+                            printf("ERROR: Unable to create output file \"%s\"\n", data_file);
+                        }
+
+                        free(bootscript);
+                    }
+                    else
+                    {
+                        printf(__FUNCTION__"() ERROR: Unable to read boot script table\n");
+                    }
+                }
+                else if (use_s3_resume != -1)
+                {
+                    printf("Going to S3 sleep for %d seconds...\n", use_s3_resume);
+
+                    // go to the S3 sleep for specific amount of seconds
+                    if ((ret = s3_sleep_with_timeout(use_s3_resume)) == 0)
+                    {
+                        printf("SUCCESS\n");
+                    }
+                    else
+                    {
+                        printf("ERROR: s3_sleep_with_timeout() fails\n");
                     }
                 }
                 else
